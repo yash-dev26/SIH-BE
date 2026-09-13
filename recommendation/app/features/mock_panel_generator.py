@@ -116,3 +116,5 @@ def generate_synthetic_training_panel(
 
     full_df = pd.concat(records, ignore_index=True)
     return full_df
+
+

@@ -61,3 +61,5 @@ def test_registry_registration_and_promotion(db_session):
     assert model3.is_active is True
     db_session.refresh(model1)
     assert model1.is_active is False  # Previous champion demoted
+
+

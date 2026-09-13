@@ -362,3 +362,5 @@ def solve_multi_parcel_allocation(
         "unassignable_parcels": sorted(set(unassignable_parcels)),
         "spot_cap_ratio_applied": spot_cap_ratio,
     }
+
+

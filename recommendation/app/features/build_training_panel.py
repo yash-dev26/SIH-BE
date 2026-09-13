@@ -24,3 +24,5 @@ def get_training_panel(
         classes=classes,
         num_days=num_days
     )
+
+

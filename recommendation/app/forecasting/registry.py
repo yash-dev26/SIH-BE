@@ -172,3 +172,5 @@ class ModelRegistryManager:
         except Exception as e:
             logger.error(f"Failed to load artifact at {active_entry.artifact_path}: {e}")
             return None, None, f"Failed to load model artifact ({e})"
+
+

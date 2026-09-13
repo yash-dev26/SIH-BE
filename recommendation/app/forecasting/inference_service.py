@@ -137,3 +137,5 @@ class ForecastingService:
             self.db.commit()
         except Exception:
             self.db.rollback()
+
+

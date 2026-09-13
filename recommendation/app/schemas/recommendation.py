@@ -95,4 +95,26 @@ class IdleMitigationRequest(BaseModel):
     top_n: int = 3
 
 
+class ScenarioCompareRequest(BaseModel):
+    trade_lane_id: int = Field(..., description="Trade lane ID to price scenarios for")
+    vessel_class_id: int = Field(..., description="Vessel class ID to price scenarios for")
+    cargo_qty_mt: float = Field(..., gt=0, description="Cargo quantity in Metric Tons")
+
+
+class ScenarioCompareResponse(BaseModel):
+    trade_lane_id: int
+    vessel_class_id: int
+    cargo_qty_mt: float
+    vessel_utilization_pct: float
+    forecasted_tce_rate_usd_day: float
+    forecast_p10: Optional[float] = None
+    forecast_p90: Optional[float] = None
+    model_fallback_used: bool
+    scenarios: List[Dict[str, Any]]
+    recommended_contract_type: str
+    rationale: str
+
+
+
+
 

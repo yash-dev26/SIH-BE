@@ -34,3 +34,5 @@ class TemporalFusionTransformerForecaster(BaseForecaster):
     @classmethod
     def load(cls, filepath: str) -> "TemporalFusionTransformerForecaster":
         return cls()
+
+

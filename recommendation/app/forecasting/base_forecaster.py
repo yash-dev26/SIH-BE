@@ -56,3 +56,5 @@ class BaseForecaster(ABC):
         Deserializes model state from disk.
         """
         pass
+
+

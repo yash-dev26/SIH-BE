@@ -195,3 +195,5 @@ def test_idle_mitigation_ranks_by_score_and_never_autocommits():
         top_n=1,
     )
     assert len(top1) == 1
+
+

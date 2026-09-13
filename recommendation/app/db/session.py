@@ -259,6 +259,10 @@ def init_db(db: Session) -> None:
         db.add_all(champion_records)
         db.commit()
 
+    # 6. Seed the default MVP auth account (Phase 5) - no-op once any user exists.
+    from app.auth import ensure_default_user
+    ensure_default_user(db)
+
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
@@ -266,3 +270,5 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+

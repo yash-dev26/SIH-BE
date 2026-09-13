@@ -114,3 +114,5 @@ def score_idle_mitigation_opportunities(
         s["status"] = "SUGGESTED"  # recommendation surface only — never auto-committed
 
     return top
+
+

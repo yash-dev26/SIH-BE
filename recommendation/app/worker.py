@@ -12,10 +12,16 @@ celery_app = Celery(
     backend=settings.REDIS_URL,
 )
 
+# Section 1.1 / Phase 5 task 1: separate queues per workload so a long-running MILP solve
+# never starves routine training jobs (or vice versa). This service owns the `training` and
+# `solver` queues; the third queue named in the plan, `ingestion`, is Celery Beat-scheduled
+# ETL that lives in the `backend` service's own Celery app (app.ingestion.tasks) in this
+# repo's current service split - it is not a task defined here, but consumers/deployments
+# should route it to its own worker pool for the same anti-starvation reason.
 celery_app.conf.update(
     task_routes={
         "app.worker.train_models_task": {"queue": "training"},
-        "app.worker.run_batch_optimization_task": {"queue": "optimization"},
+        "app.worker.run_batch_optimization_task": {"queue": "solver"},
     },
     task_serializer="json",
     accept_content=["json"],
@@ -57,6 +63,8 @@ def run_batch_optimization_task(self, parcels, spot_cap_ratio=0.4):
         return svc.generate_multi_parcel_recommendation(parcels=parcels, spot_cap_ratio=spot_cap_ratio)
     finally:
         db.close()
+
+
 
 
 

@@ -49,3 +49,5 @@ def test_sarimax_fit_predict(panel_data):
 
     assert res.point_forecast > 0
     assert res.p10 <= res.point_forecast <= res.p90
+
+
