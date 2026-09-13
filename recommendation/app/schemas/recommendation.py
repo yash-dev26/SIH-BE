@@ -51,3 +51,48 @@ class RecommendationResponse(BaseModel):
     human_readable_summary: Optional[str] = None
 
     model_config = ConfigDict(extra="ignore", from_attributes=True)
+
+
+class CargoParcelRequest(BaseModel):
+    parcel_id: str = Field(..., description="Caller-assigned unique identifier for this cargo parcel")
+    commodity: str = Field("coking_coal", description="Commodity name (e.g. coking_coal, thermal_coal)")
+    cargo_qty_mt: float = Field(..., description="Cargo quantity in Metric Tons")
+    destination_port_code: str = Field("INPRT", description="Destination port UNLOCODE")
+    laycan_start: date = Field(..., description="Laycan window start date")
+    laycan_end: date = Field(..., description="Laycan window end date")
+
+
+class BatchRecommendationRequest(BaseModel):
+    parcels: List[CargoParcelRequest] = Field(..., description="Cargo parcels to jointly optimize")
+    spot_cap_ratio: float = Field(
+        0.4, ge=0.0, le=1.0,
+        description="Max share of total cargo volume allowed on SPOT contracts (Section 3.2, constraint 9)"
+    )
+    full_optimization: bool = Field(
+        False,
+        description="Force the async full CP-SAT multi-parcel solve even for small parcel books"
+    )
+
+
+class IdleOpportunity(BaseModel):
+    opportunity_id: str
+    cargo_qty_mt: float
+    origin_port_code: str
+    destination_port_code: str
+    ballast_distance_nm: float = 0.0
+    transit_days: float = 10.0
+    tce_rate_usd_day: float = 15000.0
+    laycan_start_in_days: float = 0.0
+    is_backhaul: bool = False
+
+
+class IdleMitigationRequest(BaseModel):
+    vessel_class_name: str
+    idle_position_port_code: str
+    idle_days_available: float
+    bunker_consumption_tpd: float = 25.0
+    open_opportunities: List[IdleOpportunity]
+    top_n: int = 3
+
+
+

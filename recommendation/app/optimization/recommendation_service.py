@@ -1,10 +1,12 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.models import Port, Recommendation, VesselClass
 from app.forecasting.inference_service import ForecastingService
 from app.optimization.constraints import filter_feasible_lanes_and_vessels, resolve_port_code
+from app.optimization.milp_solver import ENTRY_HORIZONS_DAYS, solve_multi_parcel_allocation
 from app.optimization.quick_solver import solve_single_cargo_recommendation
 from app.optimization.risk_engine import evaluate_risk_flags
 from app.optimization.scenario_simulator import compare_charter_scenarios
@@ -334,4 +336,110 @@ class RecommendationService:
             self.db.rollback()
 
         return recommendation_payload
+
+    def generate_multi_parcel_recommendation(
+        self,
+        parcels: List[Dict[str, Any]],
+        spot_cap_ratio: float = 0.4,
+    ) -> Dict[str, Any]:
+        """
+        Full multi-parcel optimization path (Phase 4 "full solver" per the roadmap).
+
+        Runs the CP-SAT MILP over ALL parcels simultaneously so cross-parcel
+        constraints (SpotCapRatio, per-port throughput capacity) can actually bind -
+        unlike generate_recommendation()'s per-parcel PuLP quick_solver, which only
+        ever sees one parcel at a time. Meant to be invoked from the async Celery job
+        path (see app/worker.py + api/routers/recommendations.py) when a request has
+        more parcels than the "quick" threshold, or explicitly sets
+        `full_optimization=true`.
+
+        Each `parcel` dict must contain: parcel_id, commodity, cargo_qty_mt,
+        destination_port_code, laycan_start, laycan_end.
+        """
+        feasible_options_by_parcel: Dict[str, List[Dict[str, Any]]] = {}
+        candidate_audits_by_parcel: Dict[str, Dict[str, Any]] = {}
+        forecasts_by_option: Dict[Any, Dict[int, float]] = {}
+        port_capacity_mt_per_day: Dict[str, float] = {}
+
+        normalized_parcels = []
+        for raw in parcels:
+            p = dict(raw)
+            p["destination_port_code"] = resolve_port_code(self.db, p["destination_port_code"])
+            normalized_parcels.append(p)
+
+        for p in normalized_parcels:
+            pid = p["parcel_id"]
+            canonical_dest = p["destination_port_code"]
+
+            try:
+                audit = filter_feasible_lanes_and_vessels(
+                    db=self.db,
+                    commodity=p.get("commodity", "coal"),
+                    cargo_qty_mt=p["cargo_qty_mt"],
+                    destination_port_code=canonical_dest,
+                )
+            except ValueError:
+                audit = {
+                    "candidates_considered_count": 0,
+                    "feasible_candidates_count": 0,
+                    "rejected_candidates": [],
+                    "feasible_candidates": [],
+                }
+
+            candidate_audits_by_parcel[pid] = audit
+            feasible_options_by_parcel[pid] = audit["feasible_candidates"]
+
+            dest_port = self.db.query(Port).filter(Port.port_code == canonical_dest).first()
+            if dest_port and dest_port.cargo_handling_rate_mt_per_day:
+                port_capacity_mt_per_day[canonical_dest] = float(dest_port.cargo_handling_rate_mt_per_day)
+
+            for opt in audit["feasible_candidates"]:
+                key = (opt["trade_lane_id"], opt["vessel_class_id"])
+                if key in forecasts_by_option:
+                    continue
+                fc_results = self.forecasting_svc.get_forecast(
+                    trade_lane_id=key[0],
+                    vessel_class_id=key[1],
+                    horizons=ENTRY_HORIZONS_DAYS,
+                )
+                forecasts_by_option[key] = {res.horizon_days: res.point_forecast for res in fc_results}
+
+        solve_result = solve_multi_parcel_allocation(
+            parcels=normalized_parcels,
+            feasible_options_by_parcel=feasible_options_by_parcel,
+            forecasts_by_option=forecasts_by_option,
+            spot_cap_ratio=spot_cap_ratio,
+            port_capacity_mt_per_day=port_capacity_mt_per_day,
+            time_limit_seconds=settings.MILP_SOLVER_TIME_LIMIT_SECONDS,
+        )
+
+        # Persist one Recommendation row per successfully assigned parcel, reusing
+        # the same candidate audit trail computed above for full auditability.
+        for assignment in solve_result.get("assignments", []):
+            pid = assignment["parcel_id"]
+            audit = candidate_audits_by_parcel.get(pid, {})
+            try:
+                rec_db = Recommendation(
+                    request_payload={"parcel_id": pid, "batch": True, "spot_cap_ratio": spot_cap_ratio},
+                    recommended_vessel_class_id=assignment["vessel_class_id"],
+                    recommended_contract_type=assignment["contract_type"],
+                    recommended_entry_window_start=datetime.fromisoformat(assignment["entry_window_start"]).date(),
+                    recommended_entry_window_end=datetime.fromisoformat(assignment["entry_window_end"]).date(),
+                    expected_cost_usd=assignment["total_cost_usd"],
+                    confidence_score=0.85,
+                    candidates_considered_count=audit.get("candidates_considered_count", 0),
+                    feasible_candidates_count=audit.get("feasible_candidates_count", 0),
+                    rejected_candidates_json=audit.get("rejected_candidates", []),
+                    rationale_json=assignment.get("rationale"),
+                    risk_flags=[],
+                )
+                self.db.add(rec_db)
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+
+        return solve_result
+
+
+
 

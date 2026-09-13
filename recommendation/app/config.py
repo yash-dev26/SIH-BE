@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     DEFAULT_RETRAIN_MARGIN_PCT: float = 2.0  # Require 2% improvement to promote challenger model
     USE_SYNTHETIC_DATA: bool = True
 
+    # Optimization / Recommendation Engine (Phase 4)
+    DEFAULT_SPOT_CAP_RATIO: float = 0.4  # Section 3.2 constraint 9: max share of cargo volume on SPOT contracts
+    FULL_OPTIMIZATION_PARCEL_THRESHOLD: int = 3  # >N parcels (or explicit full_optimization=true) routes to the async CP-SAT solver
+    MILP_SOLVER_TIME_LIMIT_SECONDS: float = 10.0
+    IDLE_MITIGATION_TOP_N: int = 3
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -35,3 +41,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 settings.init_directories()
+
+
+
