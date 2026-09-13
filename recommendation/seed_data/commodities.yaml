@@ -1,0 +1,12 @@
+# Commodity reference data. Stowage factors are standard dry-bulk shipping
+# reference values (cbm/mt) used to sanity-check cargo qty vs vessel hold
+# capacity in later phases.
+
+- commodity_name: thermal_coal
+  typical_stowage_factor: 1.35
+
+- commodity_name: coking_coal
+  typical_stowage_factor: 1.25
+
+- commodity_name: iron_ore
+  typical_stowage_factor: 0.42

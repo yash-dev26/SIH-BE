@@ -50,3 +50,5 @@ htmlcov/
 *.sqlite3
 *.log
 /data/
+# Generated ML model artifacts
+recommendation/artifacts/models/

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "freightiq-backend"
+version = "0.1.0"
+description = "FreightIQ — Intelligent Freight Forecasting & Chartering Decision Engine"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "sqlalchemy>=2.0.25",
+    "pandas>=2.1.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.4.0",
+    "lightgbm>=4.3.0",
+    "statsmodels>=0.14.1",
+    "prophet>=1.1.5",
+    "joblib>=1.3.2",
+    "celery>=5.3.6",
+    "redis>=5.0.1",
+    "httpx>=0.26.0",
+    "pytest>=8.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio"
+]
