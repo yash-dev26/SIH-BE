@@ -1,0 +1,83 @@
+[project]
+name = "freightiq-backend"
+version = "0.1.0"
+description = "Intelligent Freight Forecasting & Vessel Chartering Optimization Platform — backend"
+requires-python = ">=3.11"
+
+dependencies = [
+    # --- API layer ---
+    "fastapi>=0.111,<0.112",
+    "uvicorn[standard]>=0.30,<0.31",
+    "gunicorn>=22.0,<23.0",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.3,<3.0",
+
+    # --- ORM / migrations ---
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.13,<1.14",
+    "psycopg[binary]>=3.1,<3.2",
+    "geoalchemy2>=0.15,<0.16",
+    "shapely>=2.0,<3.0",
+
+    # --- Async task layer ---
+    "celery[redis]>=5.4,<5.5",
+    "redis>=5.0,<6.0",
+
+    # --- Forecasting (Tier 0 baselines, Phase 3) ---
+    "lightgbm>=4.3,<5.0",
+    "prophet>=1.1,<1.2",
+    "statsmodels>=0.14,<0.15",
+    "scikit-learn>=1.5,<1.6",
+
+    # --- Optimization (Phase 4) ---
+    "ortools>=9.10,<10.0",
+    "pulp>=2.8,<3.0",
+
+    # --- Data handling / validation ---
+    "pandas>=2.2,<3.0",
+    "numpy>=1.26,<2.0",
+    "pandera>=0.19,<0.20",
+    "pyyaml>=6.0,<7.0",
+
+    # --- Geospatial / routing (Phase 2+) ---
+    "searoute>=1.1,<2.0",
+
+    # --- Observability ---
+    "structlog>=24.1,<25.0",
+
+    # --- Auth (Phase 5) ---
+    "python-jose[cryptography]>=3.3,<4.0",
+    "passlib[bcrypt]>=1.7,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2,<9.0",
+    "pytest-cov>=5.0,<6.0",
+    "httpx>=0.27,<0.28",
+    "ruff>=0.4,<0.5",
+    "mypy>=1.10,<2.0",
+]
+# Tier 1 / v2 forecasting models — deliberately optional so MVP install stays
+# light (Section 0: "favor deterministic, explainable baselines... before deep
+# learning; add TFT / Chronos as a v2 upgrade behind the same interface").
+advanced-forecasting = [
+    "pytorch-forecasting>=1.0,<2.0",
+    "torch>=2.3,<3.0",
+    "chronos-forecasting>=1.2,<2.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "scripts*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]

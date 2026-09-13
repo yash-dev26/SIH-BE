@@ -1,0 +1,282 @@
+# Port reference data per Section 2.1.B / Phase 1 task 3.
+#
+# Every record has a `source` field. Where a port authority / official
+# publication figure was found, `source` names it and `figures_verified: true`.
+# Where no public figure was locatable in the time available, `source:
+# "estimated"` and `figures_verified: false` — these are deliberately NOT
+# invented as if they were sourced, per the plan's instruction to mark
+# unavailable figures explicitly rather than presenting an unmarked number.
+# `seed_reference_data.py` folds `source` into the `ports.notes` column since
+# the DDL (Section 2.3) has no dedicated provenance column for reference data
+# (unlike the time-series tables, which do carry `data_provenance`).
+#
+# TODO (Phase 2 fast-follow): replace "estimated" entries with figures pulled
+# from each port's published Scale of Rates / vessel-related-charges PDF or
+# the relevant national hydrographic office's Notices to Mariners, per
+# Section 2.1.B.
+
+# --- East Coast India (ECI) — primary destination ports ---
+
+- port_code: INPRT
+  port_name: Paradip Port
+  country: India
+  role: DISCHARGE
+  latitude: 20.2667
+  longitude: 86.6833
+  max_loa_m: 300.0
+  max_beam_m: 46.0
+  max_draft_charted_m: 16.5
+  tidal_range_m: 2.0
+  cargo_handling_rate_mt_per_day: 70000.0
+  berth_count: 18
+  notes: "Deep-draft Capesize capability at Western Dock-1 / coal & iron ore berths."
+  source: "Paradip Port Authority (paradipport.gov.in) and Sept 2026 press coverage of first 16.5m-draft Capesize berthing"
+  figures_verified: true
+
+- port_code: INVTZ
+  port_name: Visakhapatnam Port
+  country: India
+  role: DISCHARGE
+  latitude: 17.6868
+  longitude: 83.2185
+  max_loa_m: 300.0
+  max_beam_m: 50.0
+  max_draft_charted_m: 18.1
+  tidal_range_m: 1.5
+  cargo_handling_rate_mt_per_day: 70000.0
+  berth_count: 26
+  notes: "Figures reflect the Outer Harbour deep-draft Vizag General Cargo Berth (VGCB), used for coking/steam coal imports up to 200,000 DWT; inner-harbour coal berths (e.g. EQ-1) are shallower, max ~14.5m draft / 240m LOA."
+  source: "Visakhapatnam Port Authority (vizagport.com) Handling Facilities and Berth Details publications"
+  figures_verified: true
+
+- port_code: INGGV
+  port_name: Gangavaram Port
+  country: India
+  role: DISCHARGE
+  latitude: 17.6167
+  longitude: 83.2667
+  max_loa_m: 300.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 18.5
+  tidal_range_m: 1.5
+  cargo_handling_rate_mt_per_day: 60000.0
+  berth_count: 8
+  notes: "Deep-water private port adjacent to Visakhapatnam; figures are typical/estimated pending Scale of Rates confirmation."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: INDHM
+  port_name: Dhamra Port
+  country: India
+  role: DISCHARGE
+  latitude: 20.7833
+  longitude: 86.9500
+  max_loa_m: 300.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 18.5
+  tidal_range_m: 2.0
+  cargo_handling_rate_mt_per_day: 60000.0
+  berth_count: 8
+  notes: "Adani-operated deep-water port, Odisha; figures are typical/estimated pending Scale of Rates confirmation."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: INGOP
+  port_name: Gopalpur Port
+  country: India
+  role: DISCHARGE
+  latitude: 19.2667
+  longitude: 84.9167
+  max_loa_m: 230.0
+  max_beam_m: 36.0
+  max_draft_charted_m: 14.0
+  tidal_range_m: 1.5
+  cargo_handling_rate_mt_per_day: 30000.0
+  berth_count: 3
+  notes: "Smaller Odisha port; figures are typical/estimated pending Scale of Rates confirmation."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: INHAL
+  port_name: Haldia Dock Complex
+  country: India
+  role: DISCHARGE
+  latitude: 22.0333
+  longitude: 88.1000
+  max_loa_m: 186.0
+  max_beam_m: 28.0
+  max_draft_charted_m: 8.5
+  tidal_range_m: 3.5
+  cargo_handling_rate_mt_per_day: 25000.0
+  berth_count: 14
+  notes: "River-mouth port on the Hooghly, subject to seasonal silting (see Section 5.1) — draft figure is conservative/estimated and should be treated as the most fragile in the seed set."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: INSGR
+  port_name: Sagar / Sagar-Sandheads Anchorage
+  country: India
+  role: DISCHARGE
+  latitude: 21.6500
+  longitude: 88.0500
+  max_loa_m: 300.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 12.0
+  tidal_range_m: 4.0
+  cargo_handling_rate_mt_per_day: 20000.0
+  berth_count: 0
+  notes: "Outer anchorage / lighterage point for Kolkata Port Trust, used for transshipment of larger vessels; subject to seasonal silting (Section 5.1). Figures estimated."
+  source: "estimated"
+  figures_verified: false
+
+# --- Australia (coal export) ---
+
+- port_code: AUNTL
+  port_name: Port of Newcastle
+  country: Australia
+  role: LOAD
+  latitude: -32.9167
+  longitude: 151.7833
+  max_loa_m: 300.0
+  max_beam_m: 50.0
+  max_draft_charted_m: 17.5
+  tidal_range_m: 1.5
+  cargo_handling_rate_mt_per_day: 80000.0
+  berth_count: 4
+  notes: "World's largest coal export port by volume; figures typical/estimated pending official confirmation."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: AUGLA
+  port_name: Port of Gladstone
+  country: Australia
+  role: LOAD
+  latitude: -23.8333
+  longitude: 151.2500
+  max_loa_m: 290.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 16.5
+  tidal_range_m: 4.0
+  cargo_handling_rate_mt_per_day: 60000.0
+  berth_count: 3
+  notes: "Coal + LNG export port, Queensland; figures typical/estimated pending official confirmation."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: AUPWC
+  port_name: Port Waratah Coal Services
+  country: Australia
+  role: LOAD
+  latitude: -32.9000
+  longitude: 151.7667
+  max_loa_m: 300.0
+  max_beam_m: 50.0
+  max_draft_charted_m: 17.5
+  tidal_range_m: 1.5
+  cargo_handling_rate_mt_per_day: 80000.0
+  berth_count: 4
+  notes: "Dedicated coal loading terminal operator within the Port of Newcastle; figures typical/estimated pending official confirmation."
+  source: "estimated"
+  figures_verified: false
+
+# --- United States (coal export) ---
+
+- port_code: USNFK
+  port_name: Norfolk (Lamberts Point / DTA)
+  country: United States
+  role: LOAD
+  latitude: 36.9500
+  longitude: -76.3167
+  max_loa_m: 290.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 18.0
+  tidal_range_m: 1.0
+  cargo_handling_rate_mt_per_day: 50000.0
+  berth_count: 2
+  notes: "Norfolk Southern's Lamberts Point (Pier 6) and Dominion Terminal Associates coal export piers; figures typical/estimated pending official confirmation."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: USBAL
+  port_name: Port of Baltimore (CNX Marine Terminal)
+  country: United States
+  role: LOAD
+  latitude: 39.2333
+  longitude: -76.5333
+  max_loa_m: 290.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 14.5
+  tidal_range_m: 0.5
+  cargo_handling_rate_mt_per_day: 40000.0
+  berth_count: 2
+  notes: "Coal export terminal, Curtis Bay; figures typical/estimated pending official confirmation."
+  source: "estimated"
+  figures_verified: false
+
+# --- Mozambique (coal export, draft-restricted) ---
+
+- port_code: MZBEW
+  port_name: Port of Beira
+  country: Mozambique
+  role: LOAD
+  latitude: -19.8333
+  longitude: 34.8500
+  max_loa_m: 200.0
+  max_beam_m: 32.0
+  max_draft_charted_m: 8.0
+  tidal_range_m: 5.0
+  cargo_handling_rate_mt_per_day: 15000.0
+  berth_count: 2
+  notes: "Shallow, silt-prone river-mouth port — draft is a hard binding constraint (typically limits to Handysize/Supramax, tide-dependent). Figures estimated."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: MZACO
+  port_name: Port of Nacala
+  country: Mozambique
+  role: LOAD
+  latitude: -14.5500
+  longitude: 40.6833
+  max_loa_m: 292.0
+  max_beam_m: 45.0
+  max_draft_charted_m: 19.0
+  tidal_range_m: 3.0
+  cargo_handling_rate_mt_per_day: 40000.0
+  berth_count: 2
+  notes: "Natural deep-water port (Vale-linked coal terminal at Nacala-a-Velha); handles Capesize, unlike Beira. Figures estimated."
+  source: "estimated"
+  figures_verified: false
+
+# --- Indonesia (coal export, barge/floating-crane loading) ---
+
+- port_code: IDTBN
+  port_name: Taboneo Anchorage
+  country: Indonesia
+  role: LOAD
+  latitude: -3.6833
+  longitude: 114.5667
+  max_loa_m: 300.0
+  max_beam_m: 50.0
+  max_draft_charted_m: 20.0
+  tidal_range_m: 2.5
+  cargo_handling_rate_mt_per_day: 25000.0
+  berth_count: 0
+  notes: "Open-water transshipment anchorage off Banjarmasin, Kalimantan — cargo is barge-fed and loaded via floating crane rather than a fixed berth, a different constraint model from the fixed-berth ports above (Section 2.1.B). Figures estimated."
+  source: "estimated"
+  figures_verified: false
+
+- port_code: IDBPN
+  port_name: Balikpapan
+  country: Indonesia
+  role: LOAD
+  latitude: -1.2667
+  longitude: 116.8167
+  max_loa_m: 250.0
+  max_beam_m: 40.0
+  max_draft_charted_m: 14.0
+  tidal_range_m: 2.5
+  cargo_handling_rate_mt_per_day: 20000.0
+  berth_count: 3
+  notes: "Kalimantan coal export port, mix of fixed berths and barge/floating-crane loading. Figures estimated."
+  source: "estimated"
+  figures_verified: false

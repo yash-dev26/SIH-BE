@@ -1,0 +1,95 @@
+# Trade lane reference data: origin (export) -> destination (ECI discharge) pairs.
+#
+# `sea_distance_nm` and `typical_transit_days_laden` here are indicative
+# placeholder estimates (great-circle-adjacent approximations, not sea-route
+# calculations), clearly not the authoritative figures the plan calls for.
+# Section 2.1.C specifies the `searoute` Python package as the correct source
+# for actual sea-route (not great-circle) distance — that's a Phase 2
+# ingestion task. `typical_transit_days_laden` here is derived as
+# `sea_distance_nm / (12 knots * 24h)`, a rough Panamax-laden-speed assumption,
+# purely to give Phase 1's synthetic data generator something plausible to
+# calibrate against.
+#
+# Port codes reference seed_data/ports.yaml.
+
+# --- Australia -> ECI (thermal + coking coal) ---
+- origin_port_code: AUNTL
+  destination_port_code: INPRT
+  commodity: thermal_coal
+  sea_distance_nm: 6100
+  typical_transit_days_laden: 21.2
+
+- origin_port_code: AUNTL
+  destination_port_code: INVTZ
+  commodity: coking_coal
+  sea_distance_nm: 6000
+  typical_transit_days_laden: 20.8
+
+- origin_port_code: AUGLA
+  destination_port_code: INPRT
+  commodity: coking_coal
+  sea_distance_nm: 6300
+  typical_transit_days_laden: 21.9
+
+- origin_port_code: AUPWC
+  destination_port_code: INVTZ
+  commodity: thermal_coal
+  sea_distance_nm: 6000
+  typical_transit_days_laden: 20.8
+
+# --- United States -> ECI (coking coal, Cape of Good Hope routing) ---
+- origin_port_code: USNFK
+  destination_port_code: INPRT
+  commodity: coking_coal
+  sea_distance_nm: 10500
+  typical_transit_days_laden: 36.5
+
+- origin_port_code: USBAL
+  destination_port_code: INVTZ
+  commodity: coking_coal
+  sea_distance_nm: 10600
+  typical_transit_days_laden: 36.8
+
+# --- Mozambique -> ECI (thermal + coking coal, shorter haul) ---
+- origin_port_code: MZBEW
+  destination_port_code: INVTZ
+  commodity: thermal_coal
+  sea_distance_nm: 2700
+  typical_transit_days_laden: 9.4
+
+- origin_port_code: MZBEW
+  destination_port_code: INPRT
+  commodity: thermal_coal
+  sea_distance_nm: 3000
+  typical_transit_days_laden: 10.4
+
+- origin_port_code: MZACO
+  destination_port_code: INVTZ
+  commodity: coking_coal
+  sea_distance_nm: 2500
+  typical_transit_days_laden: 8.7
+
+# --- Indonesia -> ECI (thermal coal, shortest haul) ---
+- origin_port_code: IDTBN
+  destination_port_code: INPRT
+  commodity: thermal_coal
+  sea_distance_nm: 2400
+  typical_transit_days_laden: 8.3
+
+- origin_port_code: IDTBN
+  destination_port_code: INGGV
+  commodity: thermal_coal
+  sea_distance_nm: 2350
+  typical_transit_days_laden: 8.2
+
+- origin_port_code: IDBPN
+  destination_port_code: INVTZ
+  commodity: thermal_coal
+  sea_distance_nm: 2600
+  typical_transit_days_laden: 9.0
+
+- origin_port_code: IDBPN
+  destination_port_code: INDHM
+  commodity: thermal_coal
+  sea_distance_nm: 2500
+  typical_transit_days_laden: 8.7
