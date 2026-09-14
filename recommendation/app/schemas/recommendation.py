@@ -1,14 +1,20 @@
 from datetime import date
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class RecommendationRequest(BaseModel):
     commodity: str = Field("coking_coal", description="Commodity name (e.g. coking_coal, thermal_coal)")
-    cargo_qty_mt: float = Field(..., description="Cargo quantity in Metric Tons (e.g. 75000)")
+    cargo_qty_mt: float = Field(
+        ...,
+        validation_alias=AliasChoices("cargo_qty_mt", "cargo_quantity_mt"),
+        description="Cargo quantity in Metric Tons (e.g. 75000)"
+    )
     destination_port_code: str = Field("INPRT", description="Destination port UNLOCODE (e.g. INPRT for Paradip Port)")
     laycan_start: date = Field(..., description="Laycan window start date")
     laycan_end: date = Field(..., description="Laycan window end date")
+    risk_tolerance: Optional[str] = Field("balanced", description="Risk tolerance (low, balanced, high)")
+
 
 
 class RecommendationResponse(BaseModel):

@@ -37,6 +37,10 @@ def evaluate_risk_flags(
                 "message": (
                     f"Bay of Bengal cyclone season window during laycan month ({laycan_start.strftime('%B')}). "
                     f"Potential 2-4 day berthing suspensions at {destination_port_name}."
+                ),
+                "mitigation": (
+                    f"Build 3-5 day buffer into laycan window to absorb potential berthing suspensions. "
+                    f"Monitor IMD cyclone advisories and consider weather routing via sheltered anchorage."
                 )
             })
         elif month in [6, 7, 8, 9]:
@@ -46,6 +50,10 @@ def evaluate_risk_flags(
                 "message": (
                     f"Southwest monsoon season active at {destination_port_name}. "
                     f"Anchorage lighterage and transshipment operations subject to weather hold."
+                ),
+                "mitigation": (
+                    f"Schedule vessel arrival during monsoon lull periods. "
+                    f"Coordinate with port authority for priority berthing during weather windows."
                 )
             })
 
@@ -59,6 +67,10 @@ def evaluate_risk_flags(
             "message": (
                 f"Narrow draft clearance ({draft_margin:.2f}m margin) for {vessel_class_name} at {destination_port_name}. "
                 f"Requires high-tide window ({dest_tide_m:.1f}m tide allowance) for safe berthing."
+            ),
+            "mitigation": (
+                f"Coordinate berthing during high-tide windows only. "
+                f"Consider partial loading to reduce laden draft if margin is critically tight."
             )
         })
 
@@ -71,6 +83,10 @@ def evaluate_risk_flags(
             "message": (
                 f"High congestion reported at {destination_port_name} (avg {avg_waiting_days_disch:.1f} waiting days). "
                 f"Estimated demurrage exposure: ~${estimated_demurrage_usd:,.0f}."
+            ),
+            "mitigation": (
+                f"Negotiate favorable demurrage terms in charter party. "
+                f"Consider pre-booking berth slot or shifting laycan to lower-congestion period."
             )
         })
 
@@ -83,6 +99,10 @@ def evaluate_risk_flags(
             "message": (
                 f"Long-haul voyage ({sea_distance_nm:,.0f} NM, ~{transit_days:.1f} transit days) from {origin_port_name}. "
                 f"Higher bunker fuel price sensitivity."
+            ),
+            "mitigation": (
+                f"Consider bunker fuel hedging or slow-steaming to reduce fuel cost exposure. "
+                f"Lock in bunker prices at favorable loading port."
             )
         })
 
@@ -95,7 +115,12 @@ def evaluate_risk_flags(
             "message": (
                 f"High forecast rate volatility ({spread_ratio*100:.1f}% spread between p10 and p90). "
                 f"Locking in a COA is recommended over spot exposure."
+            ),
+            "mitigation": (
+                f"Secure a COA or forward fixture to lock in current rate levels. "
+                f"Avoid open spot exposure during high-volatility windows."
             )
         })
 
     return flags
+

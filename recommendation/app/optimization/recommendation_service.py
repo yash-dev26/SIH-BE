@@ -165,17 +165,62 @@ class RecommendationService:
         )
 
         # 7. Build structured Rationale & Alternatives
+        # Build UI-friendly alternatives from charter scenarios that were NOT selected
         alternatives = []
+        seen_contracts = set()
+        for scenario in charter_scenarios:
+            if scenario.get("status") == "SELECTED":
+                continue
+            ct = scenario["contract_type"]
+            if ct in seen_contracts:
+                continue
+            seen_contracts.add(ct)
+
+            title_map = {
+                "SPOT": f"Spot Voyage ({best_option['vessel_class_name']})",
+                "COA": f"Short-Term COA ({best_option['vessel_class_name']})",
+                "PERIOD": f"Period Charter ({best_option['vessel_class_name']})",
+            }
+            tradeoff_map = {
+                "SPOT": f"Spot rate of ${scenario['cost_per_mt_usd']:.2f}/MT exposes to market volatility (+${scenario.get('risk_adjustment_usd', 0):,.0f} risk premium).",
+                "COA": f"COA locks in ${scenario['cost_per_mt_usd']:.2f}/MT with 5% volume discount but requires multi-shipment commitment.",
+                "PERIOD": f"Period charter at ${scenario['cost_per_mt_usd']:.2f}/MT offers lowest nominal rate but carries ${scenario.get('risk_adjustment_usd', 0):,.0f} idle capacity risk.",
+            }
+            alternatives.append({
+                "title": title_map.get(ct, f"{ct} Alternative"),
+                "vessel_class": best_option["vessel_class_name"],
+                "contract_type": ct,
+                "tradeoff": tradeoff_map.get(ct, scenario.get("recommendation_note", "Alternative chartering strategy.")),
+            })
+
+        # Add a different vessel class alternative if available
         for cand in feasible_options:
             is_selected = (cand["trade_lane_id"] == best_option["trade_lane_id"] and cand["vessel_class_id"] == best_option["vessel_class_id"])
+            if is_selected:
+                continue
+            if cand["vessel_class_name"] == best_option["vessel_class_name"]:
+                continue
+            fc_key = (cand["trade_lane_id"], cand["vessel_class_id"])
+            alt_rate = forecasts_map.get(fc_key, best_option["tce_rate_usd_day"])
             alternatives.append({
-                "origin_port_code": cand["origin_port_code"],
-                "origin_port_name": cand["origin_port_name"],
-                "vessel_class_name": cand["vessel_class_name"],
-                "usable_capacity_mt": cand["usable_capacity_mt"],
-                "utilization_pct": cand["utilization_pct"],
-                "status": "SELECTED" if is_selected else "FEASIBLE_NOT_SELECTED"
+                "title": f"{cand['vessel_class_name']} via {cand['origin_port_name']}",
+                "vessel_class": cand["vessel_class_name"],
+                "contract_type": recommended_contract,
+                "tradeoff": (
+                    f"Uses {cand['vessel_class_name']} at {cand['utilization_pct']:.0f}% capacity utilization "
+                    f"({cand['usable_capacity_mt']:,.0f} MT usable). "
+                    f"Different draft/cost profile compared to the recommended {best_option['vessel_class_name']}."
+                ),
             })
+            if len(alternatives) >= 4:
+                break
+
+        # Build binding constraints list for the frontend
+        binding_constraints = [
+            f"Usable draught limit of {dest_charted_draft:.1f}m at {dest_port.port_name if dest_port else canonical_dest_code}",
+            f"Laycan window: {opt_window_start.strftime('%d %b')} – {opt_window_end.strftime('%d %b %Y')}",
+            f"Cargo parcel: {cargo_qty_mt:,.0f} MT requires minimum {best_option['vessel_class_name']} class vessel",
+        ]
 
         rationale = {
             "summary": (
@@ -193,6 +238,7 @@ class RecommendationService:
             ),
             "contract_selection_rationale": contract_rationale,
             "entry_window_rationale": entry_window_rationale,
+            "binding_constraints": binding_constraints,
             "forecast_used": {
                 "tce_rate_usd_day": best_option["tce_rate_usd_day"],
                 "p10_lower_bound": fc_info["p10"],
