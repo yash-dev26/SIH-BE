@@ -1,8 +1,7 @@
 import logging
 import time
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -11,7 +10,7 @@ from slowapi.util import get_remote_address
 
 from app.api.routers import auth, contracts, forecasts, ports, recommendations, risk, scenarios, vessels
 from app.config import settings
-from app.db.session import SessionLocal, init_db
+from app.db.session import SessionLocal, get_db, init_db
 
 logger = logging.getLogger("freightiq.request")
 logging.basicConfig(level=logging.INFO)
@@ -105,3 +104,69 @@ def db_health_check():
         }
     finally:
         db.close()
+
+
+@app.get("/ports", tags=["Master Data"])
+@app.get("/api/ports", tags=["Master Data"])
+def get_ports():
+    from app.db.models import Port
+    db = SessionLocal()
+    try:
+        ports = db.query(Port).all()
+        return [
+            {
+                "id": p.port_code,
+                "name": p.port_name.replace(" Port", ""),
+                "country": p.country,
+                "lat": p.latitude,
+                "lng": p.longitude,
+                "maxDraftM": p.max_draft_charted_m,
+                "maxLoaM": p.max_loa_m,
+                "maxBeamM": p.max_beam_m,
+                "handlingRateMtpd": p.cargo_handling_rate_mt_per_day,
+                "notes": p.notes or ""
+            }
+            for p in ports
+        ]
+    finally:
+        db.close()
+
+
+@app.get("/vessel-classes", tags=["Master Data"])
+@app.get("/api/vessel-classes", tags=["Master Data"])
+def get_vessel_classes():
+    from app.db.models import VesselClass
+    db = SessionLocal()
+    try:
+        vclasses = db.query(VesselClass).all()
+        return [
+            {
+                "id": str(v.vessel_class_id),
+                "name": v.class_name,
+                "typicalDwt": v.dwt_max_mt,
+                "loaM": v.loa_max_m,
+                "beamM": v.beam_max_m,
+                "designDraftM": v.draft_max_m
+            }
+            for v in vclasses
+        ]
+    finally:
+        db.close()
+
+
+@app.post("/recommend", tags=["Recommendation & Optimization Engine"])
+@app.post("/api/recommend", tags=["Recommendation & Optimization Engine"])
+def get_chartering_recommendation_alias(
+    request: recommendations.RecommendationRequest,
+    db: SessionLocal = Depends(get_db)
+):
+    from app.optimization.recommendation_service import RecommendationService
+    svc = RecommendationService(db)
+    return svc.generate_recommendation(
+        commodity=request.commodity,
+        cargo_qty_mt=request.cargo_qty_mt,
+        destination_port_code=request.destination_port_code,
+        laycan_start=request.laycan_start,
+        laycan_end=request.laycan_end
+    )
+
