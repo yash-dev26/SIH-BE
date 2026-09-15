@@ -123,3 +123,5 @@ def test_forecast_metadata_semantics(db_session: Session):
 
     if not rec["model_fallback_used"]:
         assert rec["model_fallback_reason"] is None or rec["model_fallback_reason"] == ""
+
+

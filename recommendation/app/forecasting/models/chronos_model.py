@@ -34,3 +34,5 @@ class ChronosForecaster(BaseForecaster):
     @classmethod
     def load(cls, filepath: str) -> "ChronosForecaster":
         return cls()
+
+

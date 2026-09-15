@@ -83,3 +83,5 @@ class EnsembleForecaster(BaseForecaster):
     @classmethod
     def load(cls, filepath: str) -> "EnsembleForecaster":
         raise NotImplementedError("Ensemble loading handled via component model registry loading.")
+
+

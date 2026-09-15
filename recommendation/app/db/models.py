@@ -149,3 +149,60 @@ class Recommendation(Base):
     rationale_json = Column(JSON, nullable=True)
     risk_flags = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class User(Base):
+    """
+    Phase 5 auth. MVP ships a single 'logistics_manager' role, but `role` is a free-text
+    column (not an enum) precisely so multi-role RBAC (analyst / manager / admin) can be
+    added later without a schema migration or rewrite.
+    """
+    __tablename__ = "users"
+
+    user_id = Column(String(36), primary_key=True, default=generate_uuid)
+    username = Column(String(80), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(30), nullable=False, default="logistics_manager")
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class CharterContract(Base):
+    """
+    CRUD-managed charter contract record (Phase 5 /contracts router). A contract may start
+    life as the winning scenario off a `Recommendation` (recommendation_id populated) or be
+    entered directly by a logistics manager for a fixture negotiated outside the platform.
+
+    laytime_allowed_days / demurrage_rate_usd_per_day are nullable and fall back to
+    settings.DEFAULT_LAYTIME_ALLOWED_DAYS / DEFAULT_DEMURRAGE_RATE_USD_PER_DAY when a contract
+    hasn't negotiated its own terms yet (Section 5.2) - the risk/demurrage engine should never
+    assume a single platform-wide constant once real terms are known.
+    """
+    __tablename__ = "charter_contracts"
+
+    contract_id = Column(String(36), primary_key=True, default=generate_uuid)
+    recommendation_id = Column(String(36), ForeignKey("recommendations.recommendation_id"), nullable=True)
+    contract_type = Column(String(20), nullable=False)  # SPOT, COA, PERIOD
+    commodity = Column(String(60), nullable=True)
+    cargo_qty_mt = Column(Float, nullable=True)
+    origin_port_code = Column(String(10), nullable=True)
+    destination_port_code = Column(String(10), nullable=True)
+    trade_lane_id = Column(Integer, ForeignKey("trade_lanes.trade_lane_id"), nullable=True)
+    vessel_class_id = Column(Integer, ForeignKey("vessel_classes.vessel_class_id"), nullable=True)
+    tce_rate_usd_day = Column(Float, nullable=True)
+    total_cost_usd = Column(Float, nullable=True)
+    laytime_allowed_days = Column(Float, nullable=True)
+    demurrage_rate_usd_per_day = Column(Float, nullable=True)
+    entry_window_start = Column(Date, nullable=True)
+    entry_window_end = Column(Date, nullable=True)
+    status = Column(String(20), nullable=False, default="DRAFT")  # DRAFT, CONFIRMED, CANCELLED
+    created_by_user_id = Column(String(36), ForeignKey("users.user_id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+

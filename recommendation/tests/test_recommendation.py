@@ -40,3 +40,5 @@ def test_recommendation_service_for_coal_cargo(db_session):
     assert rec["cost_per_mt_usd"] > 0
     assert len(rec["charter_scenarios"]) == 3
     assert "rationale" in rec
+
+

@@ -61,3 +61,5 @@ def test_recommendation_endpoint():
     assert data["recommended_vessel_class"] in ["Panamax", "Capesize", "Supramax"]
     assert "candidates_considered_count" in data
     assert data["candidates_considered_count"] > 0
+
+
