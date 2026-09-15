@@ -128,3 +128,5 @@ def list_models(
         query = query.filter(ModelRegistry.is_active == True)
 
     return query.order_by(ModelRegistry.created_at.desc()).all()
+
+

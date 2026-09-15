@@ -112,3 +112,5 @@ class ProphetForecaster(BaseForecaster):
         inst.version = state.get("version", "1.0.0")
         inst.is_fitted = state["is_fitted"]
         return inst
+
+

@@ -126,3 +126,5 @@ def compare_charter_scenarios(
         )
 
     return scenarios, recommended_contract, rationale_msg, best_scenario
+
+

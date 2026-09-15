@@ -28,3 +28,5 @@ def test_inference_naive_fallback_when_no_active_model(db_session):
         assert res.model_id == "NAIVE_FALLBACK"
         assert res.trade_lane_id == 1
         assert res.vessel_class_id == 3
+
+

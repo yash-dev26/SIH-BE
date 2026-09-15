@@ -149,3 +149,5 @@ class LightGBMQuantileForecaster(BaseForecaster):
         instance.version = state.get("version", "1.0.0")
         instance.is_fitted = state["is_fitted"]
         return instance
+
+
