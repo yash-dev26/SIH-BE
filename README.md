@@ -1,8 +1,8 @@
-# FreightIQ
+# Samundra Setu
 
 Freight forecasting and chartering optimization for dry-bulk cargo movements into Indian east-coast ports.
 
-FreightIQ turns raw market and vessel data into a single explainable answer to the question *"which vessel class, on which lane, under which contract type, at what cost and what risk?"*
+Samundra Setu turns raw market and vessel data into a single explainable answer to the question *"which vessel class, on which lane, under which contract type, at what cost and what risk?"*
 
 The repository contains two service trees:
 
