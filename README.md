@@ -1,50 +1,131 @@
-# FreightIQ — Complete Setup & Run Guide
+# FreightIQ
 
-> **Scope:** Phase 1 project scaffolding/data modeling + Phase 2 ingestion/feature pipeline (`backend/`), plus Phase 3 forecasting, Phase 4 optimization/recommendation, and Phase 5 API layer/auth (`recommendation/`).
->
-> This README consolidates the setup, database initialization, reference/synthetic data seeding, and acceptance checks for both services in this repository.
+Freight forecasting and chartering optimization for dry-bulk cargo movements into Indian east-coast ports.
 
----
+FreightIQ turns raw market and vessel data into a single explainable answer to the question *"which vessel class, on which lane, under which contract type, at what cost and what risk?"*
 
-## 1. Project Overview
+The repository contains two service trees:
 
-FreightIQ is currently organized in phases, split across two service trees in this repository: `backend/` (Phase 1–2) and `recommendation/` (Phase 3–5).
+| Tree | What it is | Runs on |
+|---|---|---|
+| `backend/` | **Data platform** — schema, reference data, ingestion connectors, validation, feature engineering, training panel | Docker (Postgres/TimescaleDB + Redis + Celery), port `8000` |
+| `recommendation/` | **Decision service** — quantile forecasting, feasibility + solvers, scenario simulation, risk engine, REST API | Standalone (SQLite + synchronous tasks by default), port `8001` |
 
-The `backend/` Phase 1 stack provides a running local environment with:
-
-- FastAPI API skeleton
-- PostgreSQL/TimescaleDB
-- Redis
-- Celery worker infrastructure
-- SQLAlchemy ORM models
-- Alembic migrations
-- Reference-data seed files
-- Synthetic historical data generation
-
-`backend/` Phase 2 adds:
-
-- Data ingestion connectors
-- Synthetic fallback ingestion
-- Data validation
-- Data-quality logging
-- Feature snapshots
-- Feature-engineering pipelines
-- Celery Beat ingestion scheduling
-- The `get_training_panel()` contract handed to Phase 3
-
-The `recommendation/` service picks up from that handoff:
-
-- **Phase 3** — quantile forecasting models (LightGBM, Prophet, SARIMAX, TFT/Chronos stubs) behind a common `base_forecaster.py` interface, a filesystem-backed model registry with champion/challenger promotion, and an inference service with a naive seasonal-average fallback when no model is trained yet.
-- **Phase 4** — port/vessel physical feasibility constraints, a PuLP quick solver plus an OR-Tools CP-SAT multi-parcel solver, Spot/COA/Period scenario simulation, a rule-based risk engine, and the `RecommendationService` that ties all of it together into a single explainable recommendation.
-- **Phase 5** — the full REST API surface over Phases 3–4: ports/vessels/trade-lane reference endpoints, standalone scenario comparison, charter contract CRUD, per-lane risk, minimal OAuth2/JWT auth, rate limiting, and request logging.
-
-`recommendation/` currently runs as its own FastAPI service (its own `main.py`, Celery app, and — for local/standalone use — its own SQLite-by-default database) rather than as a module inside `backend/app`. See Section 24 for why that matters before Phase 6.
+> **A note on filenames.** A few files on disk still carry the old stage-numbered names (`0002_phase2_...py`, `demo_phase3.py`, `tests/test_phase5_api.py`). Those are reproduced verbatim below so the paths stay copy-pasteable. Everything else is named by what it does.
 
 ---
 
-## 2. Repository Structure
+## Architecture
 
-The documented repository structure is:
+```mermaid
+flowchart TB
+    subgraph sources["External sources (stubbed — synthetic fallback active)"]
+        S1["BDI proxy indices"]
+        S2["Bunker prices"]
+        S3["Commodity prices"]
+        S4["AIS positions"]
+        S5["Port congestion"]
+        S6["Tide data"]
+    end
+
+    subgraph backend["backend/ — Data platform (:8000)"]
+        direction TB
+        CONN["Connectors<br/>base_connector + 6 sources"]
+        SYN["Synthetic fallback tier"]
+        VAL["Validation<br/>Pandera expectations"]
+        DQ["data_quality_log"]
+        FEAT["Feature pipelines<br/>lag / seasonality / macro"]
+        SNAP["feature_snapshots"]
+        PANEL["get_training_panel()"]
+        BEAT["Celery worker + Beat<br/>scheduled ingestion"]
+    end
+
+    DB[("PostgreSQL / TimescaleDB<br/>reference data, time series,<br/>vessels, AIS, contracts")]
+
+    subgraph reco["recommendation/ — Decision service (:8001)"]
+        direction TB
+        subgraph fc["Forecasting"]
+            BASE["base_forecaster interface"]
+            MODELS["LightGBM quantile (champion)<br/>Prophet · SARIMAX<br/>TFT · Chronos (stubs)"]
+            REG["Model registry<br/>champion / challenger"]
+            INF["Inference service<br/>+ seasonal-average fallback"]
+        end
+        subgraph opt["Optimization"]
+            CONS["Feasibility constraints<br/>LOA / beam / tide-adjusted draft"]
+            QS["Quick solver (PuLP)"]
+            MILP["MILP solver (CP-SAT)"]
+            SIM["Scenario simulator<br/>Spot · COA · Period"]
+            RISK["Risk engine"]
+            RS["RecommendationService"]
+        end
+        API["REST API<br/>ports · vessels · forecasts · recommend<br/>scenarios · contracts · risk · auth"]
+    end
+
+    RDB[("SQLite (default) or Postgres<br/>model_registry, forecasts,<br/>recommendations, users")]
+    FE["Frontend dashboard<br/>(not started)"]
+
+    sources --> CONN
+    CONN -->|"source unavailable"| SYN
+    CONN --> VAL
+    SYN --> VAL
+    VAL --> DQ
+    VAL --> DB
+    DB --> FEAT
+    FEAT --> SNAP
+    FEAT --> PANEL
+    BEAT -.->|schedules| CONN
+
+    PANEL ==>|"handoff"| BASE
+    BASE --> MODELS --> REG --> INF
+    INF --> RS
+    CONS --> QS --> RS
+    CONS --> MILP --> RS
+    SIM --> RS
+    RISK --> RS
+    RS --> API
+    INF --> API
+    API <--> RDB
+    API -.->|"OpenAPI schema"| FE
+
+    style sources fill:#f5f5f5,stroke:#bbb
+    style backend fill:#eef6ff,stroke:#5b9bd5
+    style reco fill:#f0fff4,stroke:#4caf50
+    style FE fill:#fafafa,stroke:#bbb,stroke-dasharray: 5 5
+```
+
+### How a recommendation is produced
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant API as POST /recommend
+    participant CON as Constraints
+    participant F as Forecasting
+    participant S as Solver
+    participant SC as Scenario simulator
+    participant R as Risk engine
+    participant DB as recommendations
+
+    C->>API: commodity, qty, destination port, laycan
+    API->>CON: resolve port code, filter lanes + vessel classes
+    CON-->>API: feasible set + rejection audit trail
+    API->>F: forecast TCE / freight for each candidate
+    F-->>API: p10 / p50 / p90 (or seasonal fallback)
+    API->>S: cost-minimising pick (PuLP, or CP-SAT if batch)
+    S-->>API: selected lane + vessel class
+    API->>SC: price Spot vs COA vs Period
+    SC-->>API: lowest risk-adjusted cost
+    API->>R: evaluate risk flags
+    R-->>API: monsoon, draft margin, congestion, volatility
+    API->>DB: persist with rationale_json
+    API-->>C: recommendation + cost breakdown + explanation
+```
+
+---
+
+## Repository layout
+
+### `backend/` — data platform
 
 ```text
 freightiq/
@@ -53,7 +134,7 @@ freightiq/
 └── backend/
     ├── pyproject.toml
     ├── Dockerfile
-    ├── alembic/               # migration environment
+    ├── alembic/
     │   └── versions/
     │       ├── 0001_init_schema.py
     │       └── 0002_phase2_data_quality_and_feature_snapshots.py
@@ -70,11 +151,11 @@ freightiq/
     │   │   ├── forecast.py
     │   │   └── recommendation.py
     │   ├── ingestion/
-    │   │   ├── exceptions.py
-    │   │   ├── models.py
-    │   │   ├── lookups.py
-    │   │   ├── synthetic.py
-    │   │   ├── base_connector.py
+    │   │   ├── exceptions.py        # source / validation exceptions
+    │   │   ├── models.py            # data_quality_log
+    │   │   ├── lookups.py           # cached foreign-key lookups
+    │   │   ├── synthetic.py         # synthetic fallback tier
+    │   │   ├── base_connector.py    # connector orchestration
     │   │   ├── connectors/
     │   │   │   ├── bdi_proxy_connector.py
     │   │   │   ├── bunker_price_connector.py
@@ -83,8 +164,8 @@ freightiq/
     │   │   │   ├── port_congestion_connector.py
     │   │   │   └── tide_connector.py
     │   │   ├── validation/
-    │   │   │   └── expectations.py
-    │   │   └── tasks.py
+    │   │   │   └── expectations.py  # Pandera schemas
+    │   │   └── tasks.py             # Celery tasks + Beat schedule
     │   ├── features/
     │   │   ├── models.py
     │   │   ├── feature_store.py
@@ -105,7 +186,7 @@ freightiq/
         └── trade_lanes.yaml
 ```
 
-The `recommendation/` (Phase 3–5) service structure:
+### `recommendation/` — decision service
 
 ```text
 recommendation/
@@ -114,15 +195,15 @@ recommendation/
 ├── demo_phase3.py
 ├── app/
 │   ├── config.py             # Settings incl. AUTH_ENABLED, rate limiting, MILP/idle params
-│   ├── auth.py                # password hashing + JWT (Phase 5)
-│   ├── deps.py                 # get_db / get_current_user / require_role (Phase 5)
-│   ├── main.py                # FastAPI app: all routers, CORS, rate limiting, request logging
-│   ├── worker.py              # Celery app: training / solver queues
+│   ├── auth.py               # password hashing + JWT
+│   ├── deps.py               # get_db / get_current_user / require_role
+│   ├── main.py               # FastAPI app: routers, CORS, rate limiting, request logging
+│   ├── worker.py             # Celery app: training / solver queues
 │   ├── api/routers/
 │   │   ├── auth.py            # POST /auth/token, GET /auth/me
 │   │   ├── ports.py           # GET /ports, /ports/{id}, /ports/{id}/constraints
 │   │   ├── vessels.py         # GET /vessels/classes, /vessels/trade-lanes
-│   │   ├── forecasts.py       # GET /forecasts, POST /forecasts/models/train, /forecasts/jobs/{id}
+│   │   ├── forecasts.py       # GET /forecasts, POST /forecasts/models/train, ...
 │   │   ├── recommendations.py # POST /recommend, /recommend/batch, /recommend/idle-mitigation
 │   │   ├── scenarios.py       # POST /scenarios/compare
 │   │   ├── contracts.py       # CRUD /contracts
@@ -130,13 +211,13 @@ recommendation/
 │   ├── db/
 │   │   ├── models.py          # VesselClass, Port, TradeLane, ModelRegistry, Forecast,
 │   │   │                      # Recommendation, User, CharterContract
-│   │   └── session.py         # engine/session + init_db() reference-data + default-user seeding
-│   ├── schemas/                # Pydantic request/response models per router
-│   ├── features/               # training-panel access for this service
-│   ├── forecasting/            # base_forecaster, registry, inference_service, training_job,
-│   │                           # models/ (lightgbm_quantile, prophet, sarimax, tft, chronos)
-│   └── optimization/            # constraints, quick_solver, milp_solver, scenario_simulator,
-│                                # risk_engine, idle_mitigation, recommendation_service
+│   │   └── session.py         # engine/session + init_db() seeding
+│   ├── schemas/               # Pydantic request/response models per router
+│   ├── features/              # training-panel access for this service
+│   ├── forecasting/           # base_forecaster, registry, inference_service, training_job,
+│   │                          # models/ (lightgbm_quantile, prophet, sarimax, tft, chronos)
+│   └── optimization/          # constraints, quick_solver, milp_solver, scenario_simulator,
+│                              # risk_engine, idle_mitigation, recommendation_service
 ├── scripts/verify_matrix.py
 ├── seed_data/
 └── tests/
@@ -144,190 +225,46 @@ recommendation/
 
 ---
 
-## 3. Prerequisites
+## Prerequisites
 
-The documented local stack is Docker-based and consists of:
+**Data platform (`backend/`)** — Docker, plus the Python project defined in `backend/pyproject.toml`. The stack is Postgres/TimescaleDB, Redis, the FastAPI API, and a Celery worker.
 
-- PostgreSQL/TimescaleDB
-- Redis
-- FastAPI API
-- Celery worker
-
-The repository also expects the Python project/dependencies defined in `backend/pyproject.toml`.
-
-Phase 2 additionally requires:
+Two dependencies beyond the base project:
 
 ```text
-numpy
-geoalchemy2
+numpy          # synthetic random-walk / seasonal generators
+geoalchemy2    # WKTElement for writing ais_positions.location
 ```
 
-`numpy` is used by the synthetic random-walk/seasonal generators, and `geoalchemy2` provides `WKTElement` for writing `ais_positions.location`. `geoalchemy2` may already be present transitively through the PostGIS/`Port.location` setup, so check before adding a duplicate pin.
+`geoalchemy2` may already be present transitively via the PostGIS/`Port.location` setup — check before adding a duplicate pin.
+
+**Decision service (`recommendation/`)** — Python 3 and `requirements.txt`. Nothing else. It runs standalone with no Docker stack.
 
 ---
 
-## 4. Environment Configuration
-
-From the repository root:
+## Quick start — data platform
 
 ```bash
+# 1. Configure
 cp .env.example .env
-```
 
-Then configure `.env` according to the settings expected by `app/config.py`.
-
-Phase 2 connector code assumes settings corresponding to:
-
-```text
-trading_economics_api_key
-eia_api_key
-aishub_api_key
-marinetraffic_api_key
-incois_api_key
-use_synthetic_data
-```
-
-The exact environment-variable names and aliases are determined by the project's `Settings` implementation.
-
-### Synthetic mode
-
-The current Phase 2 implementation is designed to exercise the **synthetic fallback path** end-to-end.
-
-Real source fetch/scraping methods are intentionally stubbed at this stage, so API keys alone do not make those connectors live.
-
----
-
-## 5. Start the Local Stack
-
-From the repository root:
-
-```bash
+# 2. Start Postgres/TimescaleDB, Redis, API, worker
 docker compose up -d
-```
 
-This starts the documented local services:
+# 3. Apply migrations
+docker compose exec api alembic upgrade head
 
-- PostgreSQL/TimescaleDB
-- Redis
-- API
-- Celery worker
+# 4. Seed reference data (vessel classes, commodities, ports, trade lanes)
+docker compose exec api python scripts/seed_reference_data.py
 
-Check the API/database health endpoint:
+# 5. Seed five years of synthetic history
+docker compose exec api python scripts/seed_synthetic_data.py --years-of-history 5
 
-```bash
+# 6. Verify
 curl localhost:8000/health/db
 ```
 
-The FastAPI application exposes `/health` and `/health/db`.
-
----
-
-## 6. Initialize the Database
-
-Run the Alembic migrations from inside the API container:
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-This applies the Phase 1 schema and the Phase 2 migration.
-
-### Phase 2 migration
-
-Phase 2 adds:
-
-```text
-data_quality_log
-feature_snapshots
-```
-
-The Phase 2 migration is:
-
-```text
-backend/alembic/versions/0002_phase2_data_quality_and_feature_snapshots.py
-```
-
-Its `down_revision` is expected to point to:
-
-```text
-0001_init_schema
-```
-
-If the Phase 1 migration in the actual repository uses a different revision ID, the Phase 2 migration must use that actual revision ID.
-
----
-
-## 7. Seed Reference Data
-
-After migrations:
-
-```bash
-docker compose exec api python scripts/seed_reference_data.py
-```
-
-The reference seed files are:
-
-```text
-backend/seed_data/
-├── vessel_classes.yaml
-├── commodities.yaml
-├── ports.yaml
-└── trade_lanes.yaml
-```
-
-This establishes the reference entities required by the rest of the system.
-
----
-
-## 8. Seed Synthetic Historical Data
-
-Seed five years of synthetic historical data:
-
-```bash
-docker compose exec api python scripts/seed_synthetic_data.py --years-of-history 5
-```
-
-Synthetic time-series rows are explicitly marked:
-
-```text
-data_provenance='synthetic'
-```
-
-so they are not presented with the same confidence as live data.
-
-The documented Phase 1 acceptance state expects populated data for:
-
-- `vessel_classes`
-- `ports`
-- `trade_lanes`
-- `commodities`
-- the five time-series tables
-- `vessels`
-- `ais_positions`
-- `charter_contracts`
-- `voyage_simulations`
-
-Three output-oriented tables are intentionally empty at this stage:
-
-- `model_registry`
-- `forecasts`
-- `recommendations`
-
-Those are outputs of later phases and are not supposed to be populated with invented records.
-
----
-
-## 9. Phase 2 Celery Configuration
-
-Phase 2 requires one change to `backend/app/celery_app.py`.
-
-If the Celery application currently has:
-
-```python
-include=[]
-```
-
-change it to:
+Then enable ingestion task discovery — `backend/app/celery_app.py` must include the ingestion module:
 
 ```python
 celery_app = Celery(
@@ -338,94 +275,9 @@ celery_app = Celery(
 )
 ```
 
-The purpose is to make the worker discover the ingestion tasks.
+If it currently reads `include=[]`, change it. `app/ingestion/tasks.py` registers its Beat schedule via `celery_app.conf.beat_schedule.update(...)` at import time, so the schedule activates as soon as the module is included. Nothing else in `celery_app.py` needs changing.
 
-Nothing else in `celery_app.py` needs to change according to the Phase 2 notes.
-
-`app/ingestion/tasks.py` registers its Beat schedule using:
-
-```python
-celery_app.conf.beat_schedule.update(...)
-```
-
-at import time, so the schedule becomes active once the module is included.
-
----
-
-## 10. Phase 2 Ingestion Components
-
-Phase 2 introduces the following ingestion components:
-
-```text
-backend/app/ingestion/
-├── exceptions.py
-├── models.py
-├── lookups.py
-├── synthetic.py
-├── base_connector.py
-├── connectors/
-│   ├── bdi_proxy_connector.py
-│   ├── bunker_price_connector.py
-│   ├── commodity_price_connector.py
-│   ├── ais_connector.py
-│   ├── port_congestion_connector.py
-│   └── tide_connector.py
-├── validation/
-│   └── expectations.py
-└── tasks.py
-```
-
-Their documented roles are:
-
-- `exceptions.py` — source/validation exceptions
-- `models.py` — `data_quality_log`
-- `lookups.py` — cached foreign-key lookups
-- `synthetic.py` — synthetic fallback tier
-- `base_connector.py` — connector orchestration
-- `connectors/` — individual data-source connectors
-- `validation/expectations.py` — Pandera schemas
-- `tasks.py` — Celery tasks and Beat schedule registration
-
----
-
-## 11. Phase 2 Feature Pipeline
-
-Phase 2 also introduces:
-
-```text
-backend/app/features/
-├── models.py
-├── feature_store.py
-└── pipelines/
-    ├── lag_features.py
-    ├── seasonality_features.py
-    ├── macro_features.py
-    └── build_training_panel.py
-```
-
-The key Phase 2 → Phase 3 interface is:
-
-```python
-get_training_panel()
-```
-
-from:
-
-```text
-app.features.pipelines.build_training_panel
-```
-
-This produces the training panel that Phase 3 can consume.
-
----
-
-## 12. Run the Phase 2 Acceptance Check
-
-There are two documented ways to exercise Phase 2.
-
-### Option A — synchronous, no broker required
-
-From the backend environment:
+Run ingestion either synchronously (no broker required):
 
 ```bash
 python -c "
@@ -434,31 +286,14 @@ print(run_all.run())
 "
 ```
 
-This exercises the same `run()` path without requiring a running Celery broker.
-
-If executing from outside the API container, make sure the Python environment has the project installed and the backend is on the Python import path.
-
-### Option B — Celery worker + Beat
-
-Start the worker:
+…or through Celery:
 
 ```bash
 celery -A app.celery_app worker --loglevel=info &
-```
-
-Start Beat:
-
-```bash
 celery -A app.celery_app beat --loglevel=info &
 ```
 
-Beat is responsible for the scheduled ingestion tasks registered by Phase 2.
-
----
-
-## 13. Verify the Training Panel
-
-After the Phase 2 ingestion/features path has run:
+Finally, verify the training panel — the handoff point into forecasting:
 
 ```bash
 python -c "
@@ -470,449 +305,156 @@ print(sorted(df.columns))
 "
 ```
 
-A successful run should print the resulting DataFrame shape and its sorted column names.
+A successful run prints the DataFrame shape and its sorted column names.
 
-`get_training_panel()` is the documented handoff point from Phase 2 into Phase 3.
-
----
-
-## 14. Recommended Complete Startup Sequence
-
-For a fresh local environment, the documented sequence is:
-
-### Step 1 — Configure environment
-
-```bash
-cp .env.example .env
-```
-
-### Step 2 — Start services
-
-```bash
-docker compose up -d
-```
-
-### Step 3 — Apply all migrations
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-### Step 4 — Seed reference data
-
-```bash
-docker compose exec api python scripts/seed_reference_data.py
-```
-
-### Step 5 — Seed five years of synthetic data
-
-```bash
-docker compose exec api python scripts/seed_synthetic_data.py --years-of-history 5
-```
-
-### Step 6 — Verify DB/API health
-
-```bash
-curl localhost:8000/health/db
-```
-
-### Step 7 — Ensure Celery imports Phase 2 tasks
-
-Verify `backend/app/celery_app.py` contains:
-
-```python
-include=["app.ingestion.tasks"]
-```
-
-### Step 8 — Run Phase 2 ingestion
-
-For a synchronous check:
-
-```bash
-python -c "
-from app.ingestion.tasks import run_all
-print(run_all.run())
-"
-```
-
-Or start Celery:
-
-```bash
-celery -A app.celery_app worker --loglevel=info &
-celery -A app.celery_app beat --loglevel=info &
-```
-
-### Step 9 — Verify feature-panel generation
-
-```bash
-python -c "
-from datetime import date
-from app.features.pipelines.build_training_panel import get_training_panel
-df = get_training_panel(date.today())
-print(df.shape)
-print(sorted(df.columns))
-"
-```
+> Running the synchronous checks from outside the API container requires the project installed and `backend/` on the Python import path.
 
 ---
 
-## 15. Data Source / Synthetic Fallback Status
+## Quick start — decision service
 
-**Important:** the current Phase 2 implementation does not yet contain real API/scraper implementations.
+Defaults to SQLite and synchronous task execution, so it needs nothing from the Docker stack:
 
-The following connector methods are intentionally stubs:
+```bash
+cd recommendation
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 
-- `_fetch_*`
-- `_scrape_*`
-- `_parse_*`
-
-They raise `NotImplementedError` by design.
-
-Therefore, the current acceptance path is based on the **synthetic fallback**.
-
-Real API clients can later be wired into the individual connector methods without changing the overall connector architecture.
-
----
-
-## 16. Important Phase 2 Modeling Assumptions
-
-The Phase 2 implementation makes several explicit assumptions.
-
-### 16.1 Declarative Base
-
-`app/ingestion/models.py` and `app/features/models.py` attempt to import:
-
-```python
-from app.db.base import Base
+uvicorn app.main:app --reload --port 8001
 ```
 
-and fall back to:
+On startup `init_db()` creates tables, seeds vessel classes / ports / commodities / trade lanes, seeds baseline model-registry champions, and seeds the default user — so `/docs` is immediately usable with no separate seed step.
 
-```python
-from app.db.models import Base
+```bash
+curl localhost:8001/health
+curl localhost:8001/health/db
 ```
 
-If the project's actual declarative base lives elsewhere, those imports need to be adjusted.
-
-### 16.2 Settings names
-
-The connectors assume settings corresponding to the API keys and `use_synthetic_data` listed above. If the project's `Settings` class uses different attribute casing or aliases, connector code needs to be adjusted.
-
-### 16.3 BDI proxy lane mapping
-
-Composite BDI indices such as BCI/BPI/BSI/BHSI are not lane-specific, while `freight_rates` requires a non-null `trade_lane_id`.
-
-The current connector therefore broadcasts each index to every seeded lane for the matching vessel class and tags the source as:
+**To run against Postgres + Celery/Redis instead** (the production shape), set in `.env`:
 
 ```text
-trading_economics_proxy
+DATABASE_URL=postgresql://<user>:<pass>@<host>:5432/<db>
+REDIS_URL=redis://<host>:6379/0
+USE_CELERY=true
 ```
 
-This is a modeling choice, not a schema requirement, and should be revisited if it becomes misleading with real data.
+then run the API and a worker covering both queues:
 
-### 16.4 AIS placeholder fleet
+```bash
+uvicorn app.main:app --port 8001
+celery -A app.worker.celery_app worker -Q training,solver --loglevel=info
+```
 
-The synthetic AIS fallback uses three hardcoded placeholder IMO numbers because the Phase 1 `vessels` table was not described as having a seeded roster.
+### Tests
 
-Once a real vessel roster exists, this should be replaced with a query against `vessels`.
+```bash
+cd recommendation
+PYTHONPATH=. pytest tests/ -q
+```
 
-### 16.5 Separate feature snapshot concepts
+`tests/test_phase5_api.py` exercises every router (auth, ports, vessels, scenarios, contracts, risk) plus `/docs` and the OpenAPI schema end-to-end against the seeded synthetic dataset.
 
-The new:
+---
+
+## Configuration
+
+Configure `.env` according to the settings expected by `app/config.py`. The ingestion connectors assume settings corresponding to:
 
 ```text
+trading_economics_api_key
+eia_api_key
+aishub_api_key
+marinetraffic_api_key
+incois_api_key
+use_synthetic_data
+```
+
+Exact variable names and aliases are determined by the project's `Settings` implementation; if the attribute casing or aliases differ, connector code needs adjusting.
+
+### Synthetic mode
+
+The ingestion layer is currently designed to exercise the **synthetic fallback path** end to end. Real source fetch and scrape methods are deliberately stubbed, so supplying API keys alone does **not** make those connectors live.
+
+---
+
+## Data platform detail
+
+### Database initialization
+
+`docker compose exec api alembic upgrade head` applies both migrations. The second one adds:
+
+```text
+data_quality_log
 feature_snapshots
 ```
 
-table is distinct from the existing:
+Its `down_revision` is expected to point at `0001_init_schema`. If the initial migration in the actual repository uses a different revision ID, the second migration must use that actual ID.
+
+### Expected database state after seeding
+
+These tables should be populated:
+
+`vessel_classes` · `ports` · `trade_lanes` · `commodities` · the five time-series tables · `vessels` · `ais_positions` · `charter_contracts` · `voyage_simulations`
+
+These three are **intentionally empty** — they hold model and engine outputs, not seed data, and zero counts here are not an error:
 
 ```text
-Forecast.feature_snapshot
+model_registry     # trained / registered models
+forecasts          # model-generated forecasts
+recommendations    # optimization-engine output
 ```
 
-JSONB column. They serve different purposes.
+Synthetic time-series rows are explicitly marked `data_provenance='synthetic'` so they are never presented with the same confidence as live data.
 
----
-
-## 17. Phase 1 Data Provenance
-
-The reference-data provenance documented for Phase 1 is:
-
-- `seed_data/ports.yaml` contains a `source` field per port.
-- Paradip and Visakhapatnam figures are citation-backed.
-- Other port figures are marked `source: estimated`.
-- Those provenance notes are folded into the ports' `notes` column.
-- Trade-lane distances are placeholder approximations rather than calculated sea routes.
-- Synthetic time-series data is marked with `data_provenance='synthetic'`.
-
-The documented sea-route calculation using the `searoute` package is a Phase 2 ingestion task rather than part of the Phase 1 seed data.
-
----
-
-## 18. Expected Phase 1 Database State
-
-After:
-
-```bash
-docker compose exec api alembic upgrade head
-docker compose exec api python scripts/seed_reference_data.py
-docker compose exec api python scripts/seed_synthetic_data.py --years-of-history 5
-```
-
-the documented acceptance expectation is that the plausibly populated Phase 1 tables have rows.
-
-The following are intentionally empty:
-
-```text
-model_registry
-forecasts
-recommendations
-```
-
-This is expected because they represent outputs from later phases:
-
-- `model_registry` — trained/registered models
-- `forecasts` — model-generated forecasts
-- `recommendations` — optimization-engine recommendations
-
-Their zero counts are therefore not considered an error in Phase 1.
-
----
-
-## 19. What Is Not Implemented Yet
-
-According to the source documents, the following are explicitly outside the current Phase 2 scope:
-
-1. Real API/scraper implementations for the connector stubs.
-2. Great Expectations — Pandera is used instead.
-3. Model training.
-4. Model inference.
-5. Later forecasting/optimization outputs.
-
-The Phase 2 handoff into model training is:
+### The training panel contract
 
 ```python
-get_training_panel()
-```
-
----
-
-## 20. Quick Reference — Commands
-
-### Initial setup
-
-```bash
-cp .env.example .env
-docker compose up -d
-```
-
-### Database
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-### Reference seed
-
-```bash
-docker compose exec api python scripts/seed_reference_data.py
-```
-
-### Synthetic history
-
-```bash
-docker compose exec api python scripts/seed_synthetic_data.py --years-of-history 5
-```
-
-### Health
-
-```bash
-curl localhost:8000/health/db
-```
-
-### Phase 2 synchronous acceptance
-
-```bash
-python -c "
-from app.ingestion.tasks import run_all
-print(run_all.run())
-"
-```
-
-### Phase 2 Celery worker
-
-```bash
-celery -A app.celery_app worker --loglevel=info
-```
-
-### Phase 2 Celery Beat
-
-```bash
-celery -A app.celery_app beat --loglevel=info
-```
-
-### Training-panel check
-
-```bash
-python -c "
-from datetime import date
 from app.features.pipelines.build_training_panel import get_training_panel
-df = get_training_panel(date.today())
-print(df.shape)
-print(sorted(df.columns))
-"
 ```
+
+This is the single interface the decision service consumes. Everything upstream of it — connectors, validation, quality logging, feature snapshots, lag/seasonality/macro pipelines — exists to produce it.
 
 ---
 
-## 21. Phase Roadmap / Handoff
-
-The current documented progression is:
-
-```text
-Phase 1
-  ↓
-Project scaffolding
-Database schema
-Reference data
-Synthetic historical data
-  ↓
-Phase 2
-  ↓
-Ingestion
-Validation
-Data quality logging
-Feature snapshots
-Feature engineering
-Training panel
-  ↓
-Phase 3
-  ↓
-Model training / inference
-  ↓
-Later phases
-  ↓
-Forecasting / optimization / recommendations
-```
-
-The important Phase 2 contract is:
-
-```text
-app.features.pipelines.build_training_panel.get_training_panel()
-```
-
-which supplies the training panel for Phase 3.
-
----
-
-## 22. Troubleshooting / Caveats
-
-### Celery does not discover Phase 2 tasks
-
-Verify:
-
-```python
-include=["app.ingestion.tasks"]
-```
-
-is present in `app/celery_app.py`.
-
-### Migration fails at Phase 2
-
-Check that the `down_revision` in:
-
-```text
-alembic/versions/0002_phase2_data_quality_and_feature_snapshots.py
-```
-
-matches the actual Phase 1 migration revision.
-
-### Real APIs are not producing data
-
-This is expected with the current Phase 2 implementation. The real fetch/scrape/parse methods are intentionally stubs and the acceptance path uses synthetic fallback data.
-
-### Some output tables contain zero rows
-
-The following being empty is expected at this stage:
-
-```text
-model_registry
-forecasts
-recommendations
-```
-
-They are intended to be populated by later phases rather than by the initial seed process.
-
----
-
-## 23. Current Definition of Done
-
-The documented Phase 1 + Phase 2 local setup is ready for the next phase when:
-
-- Docker services are running.
-- Alembic migrations reach `head`.
-- Reference data has been seeded.
-- Five years of synthetic history can be seeded.
-- `/health/db` succeeds.
-- Phase 2 ingestion can execute through `run_all.run()`.
-- Celery worker/Beat can discover and schedule ingestion tasks.
-- Synthetic fallback ingestion completes end-to-end.
-- `get_training_panel(date.today())` returns a DataFrame and its shape/columns can be inspected.
-
-At that point, Phase 2 has established the documented handoff into Phase 3 model training/inference.
-
----
-
-## 24. `recommendation/` Service — Architecture Note
-
-`recommendation/` is its own FastAPI app, own Celery app (`app/worker.py`), and own `Base`/`DATABASE_URL` (defaults to a local `freightiq.db` SQLite file for standalone runs) rather than a module bolted onto `backend/app`. In practice this means:
-
-- It can be run and tested completely independently of `backend/` (see Section 28) — nothing here requires the Phase 1–2 Docker stack.
-- It does **not** currently share `backend/`'s Postgres database, ORM `Base`, or Alembic migrations. Its own `init_db()` (in `app/db/session.py`) creates tables and seeds reference data directly via SQLAlchemy, with a schema-drift check that drops and recreates tables if seed data looks stale.
-- The Phase 5 plan's single OpenAPI schema (for `openapi-typescript` frontend client generation in Phase 6) currently means **two** schemas — one at `backend`'s `/api/openapi.json` and one at `recommendation`'s. Before Phase 6, decide whether to merge the two services into one deployable (matching the plan's original "modular monolith" framing) or keep them split and have the frontend consume two typed clients.
-
----
-
-## 25. Phase 3 — Model Training & Inference
+## Forecasting
 
 Lives under `recommendation/app/forecasting/`.
 
-- `base_forecaster.py` — common interface every model implements (`fit`, `predict`), so swapping LightGBM for Prophet/SARIMAX/TFT/Chronos is additive.
-- `models/` — `lightgbm_quantile.py` (p10/p50/p90 quantile regression, the default champion), `prophet_model.py`, `sarimax_model.py`, plus `tft_model.py` / `chronos_model.py` stubs reserved for the Tier 1 upgrade path.
-- `registry.py` (`ModelRegistryManager`) — registers trained models against `model_registry`, and promotes a challenger to active champion only if it beats the current champion by `settings.DEFAULT_RETRAIN_MARGIN_PCT` (default 2%).
-- `training_job.py` — `run_model_training_pipeline()`, invoked either synchronously or via the Celery `training` queue (`app.worker.train_models_task`).
-- `inference_service.py` (`ForecastingService.get_forecast`) — looks up the active champion for a `(trade_lane_id, vessel_class_id)` pair; if none exists, gracefully degrades to a naive seasonal rolling-average baseline rather than erroring, and persists every forecast (with its feature snapshot) to the `forecasts` table for auditability.
-- `backtest.py` / `audit.py` — walk-forward validation and a `GET /forecasts/audit` coverage summary (training row counts, active champions, backtest metrics per lane × vessel class).
-
-**Train models and get a forecast:**
+- **`base_forecaster.py`** — the common `fit` / `predict` interface every model implements, so swapping LightGBM for Prophet, SARIMAX, TFT or Chronos is additive.
+- **`models/`** — `lightgbm_quantile.py` (p10/p50/p90 quantile regression, the default champion), `prophet_model.py`, `sarimax_model.py`, plus `tft_model.py` and `chronos_model.py` stubs reserved for the deep-learning upgrade path.
+- **`registry.py`** (`ModelRegistryManager`) — registers trained models against `model_registry` and promotes a challenger to active champion only if it beats the incumbent by `settings.DEFAULT_RETRAIN_MARGIN_PCT` (default 2%).
+- **`training_job.py`** — `run_model_training_pipeline()`, invoked synchronously or via the Celery `training` queue (`app.worker.train_models_task`).
+- **`inference_service.py`** (`ForecastingService.get_forecast`) — looks up the active champion for a `(trade_lane_id, vessel_class_id)` pair; if none exists it degrades gracefully to a naive seasonal rolling-average baseline rather than erroring, and persists every forecast with its feature snapshot to `forecasts` for auditability.
+- **`backtest.py` / `audit.py`** — walk-forward validation and a `GET /forecasts/audit` coverage summary (training row counts, active champions, backtest metrics per lane × vessel class).
 
 ```bash
+# Train
 curl -X POST localhost:8001/api/forecasts/models/train \
   -H "Content-Type: application/json" \
   -d '{"trade_lane_ids": [1], "vessel_class_ids": [3], "target_variable": "TCE_rate"}'
 
+# Forecast
 curl "localhost:8001/api/forecasts?trade_lane_id=1&vessel_class_id=3&horizons=7&horizons=30&horizons=90"
 ```
 
-If no model has been trained yet for a lane/class pair, `GET /forecasts` still returns a result — `model_fallback_used: true` and a `model_fallback_reason` explaining why (Section 5.3's layered-fallback principle).
+If no model has been trained for a lane/class pair, `GET /forecasts` still returns a result, flagged with `model_fallback_used: true` and a `model_fallback_reason` explaining why.
 
 ---
 
-## 26. Phase 4 — Optimization & Recommendation Engine
+## Optimization & recommendation
 
 Lives under `recommendation/app/optimization/`.
 
-- `constraints.py` — `resolve_port_code()` (canonicalizes aliases like `"Paradip"` / `"INPRT"` → `"INPDP"`) and `filter_feasible_lanes_and_vessels()`, which produces a full candidate audit trail (considered / rejected-with-reason / feasible) against usable-capacity and LOA/beam/tide-adjusted-draft constraints.
-- `quick_solver.py` — synchronous single-cargo LP pick (PuLP) used by `POST /recommend`.
-- `milp_solver.py` — OR-Tools CP-SAT multi-parcel formulation (Section 3.2), used by `POST /recommend/batch` for larger parcel books or when `full_optimization=true`; runs via the Celery `solver` queue when `USE_CELERY=True`.
-- `scenario_simulator.py` (`compare_charter_scenarios`) — prices Spot / short-term COA / Period charter side by side (freight, bunker, port dues, risk adjustment) and picks the lowest risk-adjusted cost.
-- `risk_engine.py` (`evaluate_risk_flags`) — monsoon/cyclone seasonality, tide-adjusted draft margin, port congestion/demurrage, long-haul transit exposure, and forecast volatility flags.
-- `idle_mitigation.py` — Section 3.3 heuristic scorer for backhaul/open-cargo opportunities against an idle vessel.
-- `recommendation_service.py` (`RecommendationService`) — orchestrates all of the above into one recommendation with a structured `rationale_json`, persisted to the `recommendations` table.
-
-**Get a recommendation:**
+- **`constraints.py`** — `resolve_port_code()` canonicalizes aliases (`"Paradip"` / `"INPRT"` → `"INPDP"`), and `filter_feasible_lanes_and_vessels()` produces a full candidate audit trail (considered / rejected-with-reason / feasible) against usable capacity and LOA, beam and tide-adjusted draft limits.
+- **`quick_solver.py`** — synchronous single-cargo LP pick (PuLP), used by `POST /recommend`.
+- **`milp_solver.py`** — OR-Tools CP-SAT multi-parcel formulation, used by `POST /recommend/batch` for larger parcel books or when `full_optimization=true`; runs on the Celery `solver` queue when `USE_CELERY=True`.
+- **`scenario_simulator.py`** (`compare_charter_scenarios`) — prices Spot, short-term COA and Period charter side by side (freight, bunker, port dues, risk adjustment) and picks the lowest risk-adjusted cost.
+- **`risk_engine.py`** (`evaluate_risk_flags`) — monsoon/cyclone seasonality, tide-adjusted draft margin, port congestion and demurrage, long-haul transit exposure, and forecast volatility.
+- **`idle_mitigation.py`** — heuristic scorer for backhaul and open-cargo opportunities against an idle vessel.
+- **`recommendation_service.py`** (`RecommendationService`) — orchestrates all of the above into one recommendation with a structured `rationale_json`, persisted to `recommendations`.
 
 ```bash
+# Full recommendation
 curl -X POST localhost:8001/api/recommend \
   -H "Content-Type: application/json" \
   -d '{
@@ -922,29 +464,22 @@ curl -X POST localhost:8001/api/recommend \
         "laycan_start": "2026-10-01",
         "laycan_end": "2026-10-15"
       }'
-```
 
-**Compare Spot vs COA vs Period directly** (independent of a full recommendation — e.g. for re-pricing a different quantity on a known lane/class):
-
-```bash
+# Compare Spot vs COA vs Period standalone — e.g. re-pricing a different
+# quantity on a lane/class you already know
 curl -X POST localhost:8001/api/scenarios/compare \
   -H "Content-Type: application/json" \
   -d '{"trade_lane_id": 1, "vessel_class_id": 3, "cargo_qty_mt": 60000}'
-```
 
-**Check risk flags for a lane before submitting a cargo request:**
-
-```bash
+# Check risk flags for a lane before submitting a cargo request
 curl "localhost:8001/api/risk/1?laycan_start=2026-07-15"
 ```
 
 ---
 
-## 27. Phase 5 — API Layer, Auth & Rate Limiting
+## API surface
 
-Lives under `recommendation/app/api/routers/`, `app/auth.py`, and `app/deps.py`.
-
-### 27.1 Full router surface
+Lives under `recommendation/app/api/routers/`, `app/auth.py` and `app/deps.py`.
 
 | Router | Endpoints |
 |---|---|
@@ -957,134 +492,184 @@ Lives under `recommendation/app/api/routers/`, `app/auth.py`, and `app/deps.py`.
 | `contracts.py` | `GET /contracts`, `GET /contracts/{id}`, `POST /contracts`, `PATCH /contracts/{id}`, `DELETE /contracts/{id}` (soft-delete → `CANCELLED`) |
 | `risk.py` | `GET /risk/{lane_id}` |
 
-Full interactive docs (OpenAPI/Swagger) render at `/docs` once the service is running; the raw schema is at `/api/openapi.json` for `openapi-typescript` frontend client generation.
+Interactive docs render at `/docs`; the raw schema is at `/api/openapi.json` for `openapi-typescript` client generation.
 
-### 27.2 Auth
+### Auth
 
-Minimal single-role (`logistics_manager`) OAuth2 password flow + JWT, gated behind `settings.AUTH_ENABLED` (**default `False`**) so local dev, CI, and every read endpoint work unauthenticated out of the box. `User.role` is a free-text column, not an enum, so multi-role RBAC (analyst/manager/admin) is additive later rather than a rewrite — `app/deps.py`'s `require_role(*roles)` dependency already exists for that.
+Minimal single-role (`logistics_manager`) OAuth2 password flow plus JWT, gated behind `settings.AUTH_ENABLED` (**default `False`**) so local dev, CI and every read endpoint work unauthenticated out of the box. `User.role` is a free-text column rather than an enum, so multi-role RBAC (analyst / manager / admin) is additive later rather than a rewrite — `app/deps.py`'s `require_role(*roles)` dependency already exists for that.
 
-A default account is seeded on first startup: username `logistics_manager` / password `changeme123` (`settings.DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD` — rotate both before any non-local deployment).
+A default account is seeded on first startup: `logistics_manager` / `changeme123` (`settings.DEFAULT_ADMIN_USERNAME` / `DEFAULT_ADMIN_PASSWORD`). **Rotate both before any non-local deployment.**
 
 ```bash
-# Get a token
 curl -X POST localhost:8001/api/auth/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=logistics_manager&password=changeme123"
 
-# Use it (only enforced once AUTH_ENABLED=true)
 curl localhost:8001/api/auth/me -H "Authorization: Bearer <token>"
 ```
 
-To turn auth enforcement on, set `AUTH_ENABLED=true` and a real `SECRET_KEY` in `.env` — mutating `/contracts` endpoints will then require a valid `logistics_manager` token; all `GET` endpoints stay open.
+Setting `AUTH_ENABLED=true` plus a real `SECRET_KEY` makes mutating `/contracts` endpoints require a valid `logistics_manager` token; all `GET` endpoints stay open.
 
-### 27.3 Rate limiting & request logging
+### Rate limiting & request logging
 
-- `settings.RATE_LIMIT_ENABLED` (default `True`) applies a fixed-window limit (`settings.RATE_LIMIT_DEFAULT`, default `120/minute`) per client IP across every route via `slowapi`'s middleware — no per-route decorators needed.
-- Every request is logged (method, path, status, duration) via a custom `app.middleware("http")` hook in `app/main.py`.
-
----
-
-## 28. Running the `recommendation/` Service Locally
-
-The service defaults to SQLite and synchronous (non-Celery) task execution, so it needs no Docker stack to run standalone:
-
-```bash
-cd recommendation
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-uvicorn app.main:app --reload --port 8001
-```
-
-On startup, `init_db()` creates tables, seeds vessel classes/ports/commodities/trade lanes, seeds baseline model-registry champions, and seeds the default `logistics_manager` user — so `/docs` is immediately usable with no separate seed step.
-
-```bash
-curl localhost:8001/health
-curl localhost:8001/health/db
-```
-
-**To run against Postgres + Celery/Redis** (matching the plan's production shape) instead of the SQLite/synchronous default, set in `.env` (or the environment):
-
-```text
-DATABASE_URL=postgresql://<user>:<pass>@<host>:5432/<db>
-REDIS_URL=redis://<host>:6379/0
-USE_CELERY=true
-```
-
-then run the API and a worker per queue:
-
-```bash
-uvicorn app.main:app --port 8001
-celery -A app.worker.celery_app worker -Q training,solver --loglevel=info
-```
-
-### Run the tests
-
-```bash
-cd recommendation
-PYTHONPATH=. pytest tests/ -q
-```
-
-`tests/test_phase5_api.py` exercises every Phase 5 router (auth, ports, vessels, scenarios, contracts, risk) plus `/docs` and the OpenAPI schema end-to-end against the seeded synthetic dataset — the Phase 5 acceptance check from the implementation plan.
+- `settings.RATE_LIMIT_ENABLED` (default `True`) applies a fixed-window limit (`settings.RATE_LIMIT_DEFAULT`, default `120/minute`) per client IP across every route via `slowapi` middleware — no per-route decorators needed.
+- Every request is logged (method, path, status, duration) through a custom `app.middleware("http")` hook in `app/main.py`.
 
 ---
 
-## 29. Quick Reference — `recommendation/` Commands
+## Service-boundary note
+
+`recommendation/` is its own FastAPI app, its own Celery app (`app/worker.py`), and its own `Base` / `DATABASE_URL` (defaulting to a local `freightiq.db` SQLite file) rather than a module bolted onto `backend/app`. Three consequences:
+
+1. It runs and tests completely independently of `backend/` — nothing in it requires the Docker stack.
+2. It does **not** share `backend/`'s Postgres database, ORM `Base`, or Alembic migrations. Its `init_db()` (in `app/db/session.py`) creates tables and seeds reference data directly via SQLAlchemy, with a schema-drift check that drops and recreates tables when seed data looks stale.
+3. The plan called for a single OpenAPI schema for frontend client generation — there are currently **two**, one at `backend`'s `/api/openapi.json` and one at `recommendation`'s.
+
+**This is the open decision blocking frontend work:** merge the two services into one deployable (matching the original modular-monolith framing), or keep them split and have the frontend consume two typed clients.
+
+---
+
+## Data provenance & modeling assumptions
+
+### Provenance
+
+- `seed_data/ports.yaml` carries a `source` field per port.
+- Paradip and Visakhapatnam figures are citation-backed; other port figures are marked `source: estimated`.
+- Those provenance notes are folded into each port's `notes` column.
+- Trade-lane distances are placeholder approximations, not calculated sea routes. Proper sea-route calculation using the `searoute` package belongs to the ingestion layer, not the seed data.
+- All synthetic time-series rows carry `data_provenance='synthetic'`.
+
+### Assumptions worth knowing
+
+**Declarative base.** `app/ingestion/models.py` and `app/features/models.py` try `from app.db.base import Base` and fall back to `from app.db.models import Base`. If the project's actual declarative base lives elsewhere, adjust those imports.
+
+**BDI proxy lane mapping.** Composite indices (BCI/BPI/BSI/BHSI) are not lane-specific, but `freight_rates` requires a non-null `trade_lane_id`. The connector therefore broadcasts each index to every seeded lane for the matching vessel class and tags the source `trading_economics_proxy`. This is a modeling choice, not a schema requirement, and should be revisited once real data makes it misleading.
+
+**AIS placeholder fleet.** The synthetic AIS fallback uses three hardcoded placeholder IMO numbers because the `vessels` table has no seeded roster. Replace with a query against `vessels` once a real roster exists.
+
+**Two feature-snapshot concepts.** The `feature_snapshots` table is distinct from the `Forecast.feature_snapshot` JSONB column. They serve different purposes.
+
+---
+
+## Not implemented yet
+
+1. Real API and scraper implementations for the connector stubs. `_fetch_*`, `_scrape_*` and `_parse_*` raise `NotImplementedError` by design; the acceptance path runs on synthetic fallback. Real clients can be wired into individual connector methods later without changing connector architecture.
+2. Great Expectations — Pandera is used instead.
+3. Frontend dashboard.
+
+---
+
+## Troubleshooting
+
+**Celery doesn't discover ingestion tasks.** Confirm `include=["app.ingestion.tasks"]` is present in `backend/app/celery_app.py`.
+
+**Migration fails on `0002_...`.** Check that its `down_revision` matches the actual initial migration revision ID.
+
+**Real APIs produce no data.** Expected. The fetch/scrape/parse methods are stubs; ingestion runs on synthetic fallback.
+
+**`model_registry`, `forecasts` and `recommendations` are empty after seeding.** Expected. They are populated by training and the optimization engine, not the seed scripts.
+
+---
+
+## Definition of done
+
+### Data platform
+
+- Docker services running.
+- Alembic migrations reach `head`.
+- Reference data seeded.
+- Five years of synthetic history seeded.
+- `/health/db` succeeds.
+- Ingestion executes through `run_all.run()`.
+- Celery worker and Beat discover and schedule ingestion tasks.
+- Synthetic fallback ingestion completes end to end.
+- `get_training_panel(date.today())` returns a DataFrame whose shape and columns can be inspected.
+
+### Decision service
+
+- `pip install -r requirements.txt` succeeds and `uvicorn app.main:app` starts with no Docker stack.
+- `/health` and `/health/db` succeed.
+- `/docs` renders and `/api/openapi.json` lists every router above.
+- `POST /forecasts/models/train` + `GET /forecasts` return a forecast, with graceful fallback when no model is trained.
+- `POST /recommend` returns a full recommendation (vessel class, contract type, cost breakdown, risk flags, rationale) for a sample cargo request.
+- `POST /scenarios/compare` and `GET /risk/{lane_id}` work standalone.
+- `/contracts` supports create / read / update / cancel.
+- `POST /auth/token` issues a JWT for the seeded account; `AUTH_ENABLED=true` enforces it on mutating `/contracts` calls without blocking reads.
+- `PYTHONPATH=. pytest tests/ -q` passes in full — 32 tests: 18 forecasting/optimization + 14 API.
+
+---
+
+## Roadmap
+
+```mermaid
+flowchart LR
+    A["Foundation<br/>schema · reference data<br/>synthetic history"] --> B["Pipeline<br/>ingestion · validation<br/>features · training panel"]
+    B --> C["Forecasting<br/>quantile models · registry<br/>champion promotion"]
+    C --> D["Optimization<br/>feasibility · solvers<br/>scenarios · risk"]
+    D --> E["REST API<br/>routers · auth<br/>rate limiting"]
+    E -.-> F["Frontend dashboard<br/>blocked on service-boundary decision"]
+
+    style A fill:#e8f5e9,stroke:#4caf50
+    style B fill:#e8f5e9,stroke:#4caf50
+    style C fill:#e8f5e9,stroke:#4caf50
+    style D fill:#e8f5e9,stroke:#4caf50
+    style E fill:#e8f5e9,stroke:#4caf50
+    style F fill:#fafafa,stroke:#bbb,stroke-dasharray: 5 5
+```
+
+Everything through the REST API layer is complete. The frontend is the next piece of work, and it first needs the single-vs-split-service decision resolved.
+
+---
+
+## Command cheat sheet
+
+### Data platform (`backend/`, port 8000)
 
 ```bash
-# Setup
+cp .env.example .env
+docker compose up -d
+docker compose exec api alembic upgrade head
+docker compose exec api python scripts/seed_reference_data.py
+docker compose exec api python scripts/seed_synthetic_data.py --years-of-history 5
+curl localhost:8000/health/db
+
+# Ingestion, synchronous
+python -c "from app.ingestion.tasks import run_all; print(run_all.run())"
+
+# Ingestion, scheduled
+celery -A app.celery_app worker --loglevel=info
+celery -A app.celery_app beat --loglevel=info
+
+# Training-panel check
+python -c "
+from datetime import date
+from app.features.pipelines.build_training_panel import get_training_panel
+df = get_training_panel(date.today())
+print(df.shape); print(sorted(df.columns))
+"
+```
+
+### Decision service (`recommendation/`, port 8001)
+
+```bash
 cd recommendation && pip install -r requirements.txt
-
-# Run
 uvicorn app.main:app --reload --port 8001
 
-# Train a model
+# Train
 curl -X POST localhost:8001/api/forecasts/models/train \
-  -d '{"trade_lane_ids": [1], "vessel_class_ids": [3]}' -H "Content-Type: application/json"
+  -H "Content-Type: application/json" \
+  -d '{"trade_lane_ids": [1], "vessel_class_ids": [3]}'
 
-# Get a forecast
+# Forecast
 curl "localhost:8001/api/forecasts?trade_lane_id=1&vessel_class_id=3"
 
-# Get a recommendation
+# Recommend
 curl -X POST localhost:8001/api/recommend -H "Content-Type: application/json" \
   -d '{"commodity":"coking_coal","cargo_qty_mt":75000,"destination_port_code":"INPRT","laycan_start":"2026-10-01","laycan_end":"2026-10-15"}'
 
-# Log in (once AUTH_ENABLED=true)
+# Log in (enforced once AUTH_ENABLED=true)
 curl -X POST localhost:8001/api/auth/token -d "username=logistics_manager&password=changeme123"
 
 # Tests
 PYTHONPATH=. pytest tests/ -q
 ```
-
----
-
-## 30. Updated Phase Roadmap / Handoff
-
-```text
-Phase 1 (backend/)
-  ↓ Project scaffolding, DB schema, reference data, synthetic history
-Phase 2 (backend/)
-  ↓ Ingestion, validation, data-quality logging, feature snapshots, training panel
-Phase 3 (recommendation/)
-  ↓ Quantile forecasting models, model registry, champion promotion, inference service
-Phase 4 (recommendation/)
-  ↓ Port/vessel feasibility, quick + MILP solvers, scenario simulation, risk engine
-Phase 5 (recommendation/)
-  ↓ Full REST API, auth, rate limiting — done, this document
-Phase 6 (not started)
-  ↓ Frontend dashboard — first needs the Section 24 single-vs-split-service decision
-```
-
----
-
-## 31. `recommendation/` Definition of Done (Phases 3–5)
-
-- `pip install -r requirements.txt` succeeds and `uvicorn app.main:app` starts without a Docker stack.
-- `/health` and `/health/db` succeed.
-- `/docs` renders and `/api/openapi.json` lists every router in Section 27.1.
-- `POST /forecasts/models/train` + `GET /forecasts` return a forecast, with graceful fallback when no model is trained yet.
-- `POST /recommend` returns a full recommendation (vessel class, contract type, cost breakdown, risk flags, rationale) for a sample cargo request.
-- `POST /scenarios/compare` and `GET /risk/{lane_id}` work standalone, independent of a full recommendation.
-- `/contracts` supports create/read/update/cancel.
-- `POST /auth/token` issues a JWT for the seeded `logistics_manager` account; flipping `AUTH_ENABLED=true` enforces it on mutating `/contracts` calls without blocking reads.
-- `PYTHONPATH=. pytest tests/ -q` passes in full (32 tests as of Phase 5: 18 Phase 3/4 + 14 Phase 5).
