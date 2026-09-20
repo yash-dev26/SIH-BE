@@ -81,6 +81,8 @@ export interface RecommendationSummary {
   marketEntryWindow: string;
   expectedFreightUsdPerMt: number;
   expectedLogisticsCostUsd: number;
+  overallTceRateUsdDay: number;
+  overallVoyageCostUsd: number;
   confidence: Confidence;
   risk: RiskLevel;
 }
@@ -102,6 +104,44 @@ export interface Alternative {
   tradeoff: string;
 }
 
+export interface DailyWaypoint {
+  day: number;
+  date: string;
+  lat: number;
+  lon: number;
+  location_name: string;
+  wave_height_m: number;
+  wave_direction_deg: number;
+  wind_speed_kts: number;
+  wind_direction: string;
+  sea_state: string;
+  weather_condition: string;
+  visibility_km: number;
+  speed_penalty_pct: number;
+  fuel_penalty_pct: number;
+  alert?: string | null;
+  data_source: string;
+}
+
+export interface VoyageWeather {
+  origin_port_code: string;
+  origin_port_name: string;
+  destination_port_code: string;
+  destination_port_name: string;
+  departure_date: string;
+  transit_days: number;
+  sea_distance_nm: number;
+  overall_status: string;
+  status_color: "GREEN" | "YELLOW" | "RED";
+  safety_score: number;
+  max_wave_height_m: number;
+  max_wind_speed_kts: number;
+  estimated_delay_hours: number;
+  estimated_fuel_surcharge_pct: number;
+  weather_alerts: string[];
+  daily_waypoints: DailyWaypoint[];
+}
+
 export interface Recommendation {
   id: string;
   demo: boolean;
@@ -114,4 +154,5 @@ export interface Recommendation {
   vesselOptions: VesselOption[];
   rationale: Rationale;
   alternatives: Alternative[];
+  voyageWeather?: VoyageWeather;
 }

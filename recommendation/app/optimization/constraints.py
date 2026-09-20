@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Tuple
 from sqlalchemy.orm import Session
 from app.db.models import Port, VesselClass, TradeLane
@@ -12,8 +13,19 @@ PORT_ALIAS_MAP = {
     "GANGAVARAM": "INGGV",
     "DHAMRA": "INDHM",
     "HALDIA": "INHAL",
+    "HALDIA DOCK COMPLEX": "INHAL",
+    "HALDIA DOCK": "INHAL",
     "SAGAR": "INSGR",
+    "SAGAR-SANDHEADS": "INSGR",
+    "SAGAR SANDHEADS": "INSGR",
+    "SAGAR / SARGAR-SANDHEADS ANCHORAGE": "INSGR",
+    "SAGAR / SAGAR-SANDHEADS ANCHORAGE": "INSGR",
+    "SARGAR-SANDHEADS": "INSGR",
 }
+
+
+def _normalize_alias(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", str(value).strip().upper()).strip()
 
 
 def resolve_port_code(db: Session, code_or_name: str) -> str:
@@ -23,9 +35,17 @@ def resolve_port_code(db: Session, code_or_name: str) -> str:
     clean = str(code_or_name).strip().upper()
     if clean in PORT_ALIAS_MAP:
         return PORT_ALIAS_MAP[clean]
-    port = db.query(Port).filter((Port.port_code == clean) | (Port.port_name.ilike(code_or_name))).first()
-    if port:
-        return port.port_code
+
+    normalized = _normalize_alias(code_or_name)
+    normalized_aliases = {_normalize_alias(key): value for key, value in PORT_ALIAS_MAP.items()}
+    if normalized in normalized_aliases:
+        return normalized_aliases[normalized]
+
+    for candidate in {clean, normalized, clean.replace("-", " "), clean.replace("_", " ")}:
+        port = db.query(Port).filter((Port.port_code == candidate) | (Port.port_name.ilike(f"%{candidate}%"))).first()
+        if port:
+            return port.port_code
+
     return clean
 
 

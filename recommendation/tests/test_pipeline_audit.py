@@ -29,6 +29,10 @@ def test_port_code_alias_resolution(db_session: Session):
     assert resolve_port_code(db_session, "Paradip Port") == "INPDP"
     assert resolve_port_code(db_session, "Vizag") == "INVTZ"
     assert resolve_port_code(db_session, "INPDP") == "INPDP"
+    assert resolve_port_code(db_session, "Haldia") == "INHAL"
+    assert resolve_port_code(db_session, "Haldia Dock Complex") == "INHAL"
+    assert resolve_port_code(db_session, "Sagar-Sandheads") == "INSGR"
+    assert resolve_port_code(db_session, "Sagar / Sagar-Sandheads Anchorage") == "INSGR"
 
 
 def test_usable_capacity_and_utilization(db_session: Session):
@@ -123,5 +127,20 @@ def test_forecast_metadata_semantics(db_session: Session):
 
     if not rec["model_fallback_used"]:
         assert rec["model_fallback_reason"] is None or rec["model_fallback_reason"] == ""
+
+
+def test_haldia_no_feasible_route_is_structured(db_session: Session):
+    """Verifies infeasible cargo/port combinations return a structured response rather than raising an exception."""
+    svc = RecommendationService(db_session)
+    rec = svc.generate_recommendation(
+        commodity="coking_coal",
+        cargo_qty_mt=70000.0,
+        destination_port_code="Haldia",
+        laycan_start=date(2026, 1, 15),
+        laycan_end=date(2026, 1, 25),
+    )
+    assert rec["status"] == "NO_FEASIBLE_ROUTE"
+    assert rec["destination_port_code"] == "INHAL"
+    assert "No feasible vessel class" in rec["message"]
 
 

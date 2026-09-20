@@ -10,6 +10,7 @@ from app.optimization.milp_solver import ENTRY_HORIZONS_DAYS, solve_multi_parcel
 from app.optimization.quick_solver import solve_single_cargo_recommendation
 from app.optimization.risk_engine import evaluate_risk_flags
 from app.optimization.scenario_simulator import compare_charter_scenarios
+from app.services.weather_service import VoyageWeatherService
 
 
 class RecommendationService:
@@ -28,7 +29,8 @@ class RecommendationService:
         cargo_qty_mt: float,
         destination_port_code: str,
         laycan_start: date,
-        laycan_end: date
+        laycan_end: date,
+        contract_preference: Optional[str] = None
     ) -> Dict[str, Any]:
         # 0. Resolve canonical destination port code
         canonical_dest_code = resolve_port_code(self.db, destination_port_code)
@@ -45,10 +47,46 @@ class RecommendationService:
 
         if not feasible_options:
             rejected_summary = [f"{r['vessel_class_name']} @ {r['origin_port_name']}: {r['rejection_reason']}" for r in candidate_audit["rejected_candidates"][:3]]
-            raise ValueError(
+            message = (
                 f"No feasible vessel class / trade lane found for {cargo_qty_mt:,.0f} MT {commodity} "
                 f"to port {canonical_dest_code}. Rejections: {'; '.join(rejected_summary)}"
             )
+            return {
+                "status": "NO_FEASIBLE_ROUTE",
+                "message": message,
+                "commodity": commodity,
+                "cargo_qty_mt": float(cargo_qty_mt),
+                "destination_port_code": canonical_dest_code,
+                "recommended_origin_port": None,
+                "recommended_origin_port_code": None,
+                "recommended_vessel_class": None,
+                "recommended_trade_lane_id": None,
+                "recommended_contract_type": None,
+                "recommended_entry_window_start": laycan_start.isoformat(),
+                "recommended_entry_window_end": laycan_end.isoformat(),
+                "expected_total_cost_usd": None,
+                "cost_per_mt_usd": None,
+                "forecasted_tce_rate_usd_day": None,
+                "model_id": None,
+                "model_version": None,
+                "model_fallback_used": False,
+                "model_fallback_reason": None,
+                "model_training_rows": 0,
+                "vessel_utilization_pct": None,
+                "candidates_considered_count": len(candidate_audit.get("candidates_considered", [])),
+                "feasible_candidates_count": 0,
+                "cost_breakdown": {},
+                "rejections": candidate_audit["rejected_candidates"][:5],
+                "rejected_candidates": candidate_audit["rejected_candidates"][:5],
+                "rationale": {
+                    "summary": message,
+                    "rejection_summary": rejected_summary,
+                },
+                "risk_flags": [],
+                "charter_scenarios": [],
+                "recommended_contract_type": None,
+                "recommended_vessel_class": None,
+            }
 
         # 2. Retrieve Phase 3 rate forecasts for each feasible (lane, class) pair
         forecasts_map = {}
@@ -122,7 +160,8 @@ class RecommendationService:
             port_dues_usd=best_option.get("typical_port_dues_usd", 50000.0),
             vessel_utilization_pct=vessel_utilization_pct,
             forecast_p10=fc_info["p10"],
-            forecast_p90=fc_info["p90"]
+            forecast_p90=fc_info["p90"],
+            preferred_contract_type=contract_preference,
         )
 
         # Top-level cost figures MUST correspond 100% to the winning contract scenario
@@ -140,6 +179,15 @@ class RecommendationService:
             "cost_per_mt_usd": cost_per_mt_usd
         }
 
+        # 4b. Fetch live voyage route marine weather forecast
+        weather_svc = VoyageWeatherService(self.db)
+        voyage_weather = weather_svc.get_voyage_weather_forecast(
+            origin_port_code=best_option["origin_port_code"],
+            destination_port_code=canonical_dest_code,
+            departure_date=laycan_start,
+            transit_days=max(1, int(round(best_option.get("transit_days", 7))))
+        )
+
         # 5. Evaluate multi-factor risk flags
         risk_flags = evaluate_risk_flags(
             origin_port_code=best_option["origin_port_code"],
@@ -154,7 +202,8 @@ class RecommendationService:
             forecast_p10=fc_info["p10"],
             forecast_p90=fc_info["p90"],
             laycan_start=laycan_start,
-            sea_distance_nm=best_option["sea_distance_nm"]
+            sea_distance_nm=best_option["sea_distance_nm"],
+            voyage_weather_data=voyage_weather
         )
 
         # 6. Optimal Entry Window Selection
@@ -325,6 +374,7 @@ class RecommendationService:
                 "model_fallback_reason": fc_info.get("model_fallback_reason")
             },
             "cost_breakdown": cost_breakdown,
+            "voyage_weather": voyage_weather,
             "risks": risk_flags,
             "why_selected": [
                 f"Lowest risk-adjusted landed cost among feasible options (${cost_per_mt_usd:.2f}/MT).",
@@ -363,7 +413,12 @@ class RecommendationService:
         # Persist to DB
         try:
             rec_db = Recommendation(
-                request_payload={"commodity": commodity, "cargo_qty_mt": cargo_qty_mt, "destination": canonical_dest_code},
+                request_payload={
+                    "commodity": commodity,
+                    "cargo_qty_mt": cargo_qty_mt,
+                    "destination": canonical_dest_code,
+                    "contract_preference": contract_preference,
+                },
                 recommended_vessel_class_id=best_option["vessel_class_id"],
                 recommended_contract_type=recommended_contract,
                 recommended_entry_window_start=opt_window_start,

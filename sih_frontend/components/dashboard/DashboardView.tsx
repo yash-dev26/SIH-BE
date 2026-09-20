@@ -6,6 +6,7 @@ import { MarketOutlook } from "@/components/dashboard/MarketOutlook";
 import { RouteMap } from "@/components/map/RouteMap";
 import { AlternativesPanel, RationalePanel, RisksPanel } from "@/components/recommendation/RationalePanel";
 import { RecommendationCard } from "@/components/recommendation/RecommendationCard";
+import { VoyageWeatherTracker } from "@/components/recommendation/VoyageWeatherTracker";
 import { Panel } from "@/components/ui/Panel";
 import { formatLaycan, formatMt, titleCase } from "@/lib/format";
 import type { Recommendation } from "@/lib/types";
@@ -43,6 +44,7 @@ export function DashboardView({ rec }: { rec: Recommendation }) {
 
       <main className="mx-auto grid max-w-[1440px] gap-4 px-5 py-4">
         <RecommendationCard rec={rec} />
+        <VoyageWeatherTracker weather={rec.voyageWeather} />
         <Panel>
           <MarketOutlook forecast={rec.forecast} />
           <ForecastBandChart forecast={rec.forecast} />

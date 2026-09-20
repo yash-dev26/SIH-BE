@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 
-from app.api.routers import auth, contracts, forecasts, ports, recommendations, risk, scenarios, vessels
+from app.api.routers import auth, contracts, forecasts, ports, recommendations, risk, scenarios, vessels, weather
 from app.config import settings
 from app.db.session import SessionLocal, get_db, init_db
 
@@ -79,6 +79,7 @@ app.include_router(recommendations.router, prefix=settings.API_V1_STR)
 app.include_router(scenarios.router, prefix=settings.API_V1_STR)
 app.include_router(contracts.router, prefix=settings.API_V1_STR)
 app.include_router(risk.router, prefix=settings.API_V1_STR)
+app.include_router(weather.router, prefix=settings.API_V1_STR)
 
 
 @app.get("/health", tags=["Health"])
@@ -167,6 +168,7 @@ def get_chartering_recommendation_alias(
         cargo_qty_mt=request.cargo_qty_mt,
         destination_port_code=request.destination_port_code,
         laycan_start=request.laycan_start,
-        laycan_end=request.laycan_end
+        laycan_end=request.laycan_end,
+        contract_preference=request.contract_preference,
     )
 

@@ -13,37 +13,43 @@ class RecommendationRequest(BaseModel):
     destination_port_code: str = Field("INPRT", description="Destination port UNLOCODE (e.g. INPRT for Paradip Port)")
     laycan_start: date = Field(..., description="Laycan window start date")
     laycan_end: date = Field(..., description="Laycan window end date")
-    risk_tolerance: Optional[str] = Field("balanced", description="Risk tolerance (low, balanced, high)")
-
+    risk_tolerance: Optional[str] = Field("balanced", validation_alias=AliasChoices("risk_tolerance", "riskTolerance"), description="Risk tolerance (low, balanced, high)")
+    contract_preference: Optional[str] = Field(
+        "let_system_decide",
+        validation_alias=AliasChoices("contract_preference", "contractPreference"),
+        description="Contract selection preference: let_system_decide, spot, short_term, coa, period"
+    )
 
 
 class RecommendationResponse(BaseModel):
-    commodity: str
-    cargo_qty_mt: float
-    destination_port_code: str
-    recommended_origin_port: str
-    recommended_origin_port_code: str
-    recommended_vessel_class: str
-    recommended_trade_lane_id: int
-    recommended_contract_type: str
-    recommended_entry_window_start: str
-    recommended_entry_window_end: str
-    expected_total_cost_usd: float
-    cost_per_mt_usd: float
-    forecasted_tce_rate_usd_day: float
-    model_id: str
-    model_version: str
-    model_fallback_used: bool
+    status: str = "SUCCESS"
+    message: Optional[str] = None
+    commodity: Optional[str] = None
+    cargo_qty_mt: Optional[float] = None
+    destination_port_code: Optional[str] = None
+    recommended_origin_port: Optional[str] = None
+    recommended_origin_port_code: Optional[str] = None
+    recommended_vessel_class: Optional[str] = None
+    recommended_trade_lane_id: Optional[int] = None
+    recommended_contract_type: Optional[str] = None
+    recommended_entry_window_start: Optional[str] = None
+    recommended_entry_window_end: Optional[str] = None
+    expected_total_cost_usd: Optional[float] = None
+    cost_per_mt_usd: Optional[float] = None
+    forecasted_tce_rate_usd_day: Optional[float] = None
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+    model_fallback_used: Optional[bool] = None
     model_fallback_reason: Optional[str] = None
-    model_training_rows: int
-    vessel_utilization_pct: float
-    candidates_considered_count: int
-    feasible_candidates_count: int
-    cost_breakdown: Dict[str, Any]
-    rejected_candidates: List[Dict[str, Any]]
-    rationale: Dict[str, Any]
-    risk_flags: List[Dict[str, Any]]
-    charter_scenarios: List[Dict[str, Any]]
+    model_training_rows: Optional[int] = None
+    vessel_utilization_pct: Optional[float] = None
+    candidates_considered_count: Optional[int] = None
+    feasible_candidates_count: Optional[int] = 0
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    rejected_candidates: Optional[List[Dict[str, Any]]] = None
+    rationale: Optional[Dict[str, Any]] = None
+    risk_flags: Optional[List[Dict[str, Any]]] = None
+    charter_scenarios: Optional[List[Dict[str, Any]]] = None
 
     # New structured fields
     destination: Optional[Dict[str, Any]] = None
@@ -54,6 +60,7 @@ class RecommendationResponse(BaseModel):
     forecast: Optional[Dict[str, Any]] = None
     why_selected: Optional[List[str]] = None
     alternatives: Optional[List[Dict[str, Any]]] = None
+    voyage_weather: Optional[Dict[str, Any]] = None
     human_readable_summary: Optional[str] = None
 
     model_config = ConfigDict(extra="ignore", from_attributes=True)

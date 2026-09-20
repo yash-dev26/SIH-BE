@@ -1,7 +1,6 @@
 import { Panel } from "@/components/ui/Panel";
-import { formatUsd, formatUsdPerMt } from "@/lib/format";
 import type { Recommendation, RiskLevel } from "@/lib/types";
-import { AlertTriangle, GitFork, ShieldCheck, Info } from "lucide-react";
+import { AlertTriangle, GitFork, ShieldCheck } from "lucide-react";
 
 function headline(text: string) {
   // Extract just the first sentence for a cleaner headline
