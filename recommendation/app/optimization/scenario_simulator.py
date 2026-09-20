@@ -1,6 +1,24 @@
 from typing import Any, Dict, List, Tuple
 
 
+def _normalize_preference(preferred_contract_type: str | None) -> str | None:
+    if preferred_contract_type is None:
+        return None
+    normalized = str(preferred_contract_type).strip().lower()
+    if normalized in {"let_system_decide", "system", "default", ""}:
+        return None
+    mapping = {
+        "spot": "SPOT",
+        "short_term": "COA",
+        "short-term": "COA",
+        "coa": "COA",
+        "period": "PERIOD",
+        "time_charter": "PERIOD",
+        "time-charter": "PERIOD",
+    }
+    return mapping.get(normalized, normalized.upper())
+
+
 def compare_charter_scenarios(
     cargo_qty_mt: float,
     sea_distance_nm: float,
@@ -11,7 +29,8 @@ def compare_charter_scenarios(
     vessel_utilization_pct: float = 100.0,
     bunker_price_usd_mt: float = 550.0,
     forecast_p10: float = None,
-    forecast_p90: float = None
+    forecast_p90: float = None,
+    preferred_contract_type: str | None = None,
 ) -> Tuple[List[Dict[str, Any]], str, str, Dict[str, Any]]:
     """
     Simulates side-by-side voyage economics across Spot, Short-Term COA, and Period Charter.
@@ -97,9 +116,19 @@ def compare_charter_scenarios(
         }
     ]
 
-    # Select winner by min risk_adjusted_cost_usd
+    preferred_contract = _normalize_preference(preferred_contract_type)
     scenarios_sorted = sorted(raw_scenarios, key=lambda s: s["risk_adjusted_cost_usd"])
     best_scenario = scenarios_sorted[0]
+
+    if preferred_contract is not None:
+        preferred_scenario = next((s for s in raw_scenarios if s["contract_type"] == preferred_contract), None)
+        if preferred_scenario is not None:
+            preferred_cost = preferred_scenario["risk_adjusted_cost_usd"]
+            best_cost = best_scenario["risk_adjusted_cost_usd"]
+            tolerance = max(best_cost * 0.08, 50.0)
+            if preferred_cost <= best_cost + tolerance:
+                best_scenario = preferred_scenario
+
     recommended_contract = best_scenario["contract_type"]
 
     scenarios = []
@@ -124,6 +153,9 @@ def compare_charter_scenarios(
         rationale_msg = (
             f"SPOT selected as optimal contract due to favorable short-term spot rates (${spot_per_mt:.2f}/MT)."
         )
+
+    if preferred_contract and recommended_contract != preferred_contract:
+        rationale_msg += f" User preference for {preferred_contract} was considered, but the economic risk-adjusted result stayed materially more competitive in the final selection."
 
     return scenarios, recommended_contract, rationale_msg, best_scenario
 

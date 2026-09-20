@@ -17,7 +17,8 @@ def evaluate_risk_flags(
     laycan_start: date,
     sea_distance_nm: float,
     avg_waiting_days_load: float = 2.0,
-    avg_waiting_days_disch: float = 3.5
+    avg_waiting_days_disch: float = 3.5,
+    voyage_weather_data: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
     Multi-factor contextual risk engine for FreightIQ.
@@ -121,6 +122,35 @@ def evaluate_risk_flags(
                 f"Avoid open spot exposure during high-volatility windows."
             )
         })
+
+    # 6. Live Voyage Route Weather Risk
+    if voyage_weather_data:
+        max_wave = voyage_weather_data.get("max_wave_height_m", 0.0)
+        delay_hrs = voyage_weather_data.get("estimated_delay_hours", 0.0)
+        safety_score = voyage_weather_data.get("safety_score", 100)
+
+        if max_wave >= 3.5 or safety_score < 60:
+            flags.append({
+                "code": "VOYAGE_ROUGH_SEAS_WARNING",
+                "severity": "WARNING",
+                "message": (
+                    f"Rough sea swell (max {max_wave}m wave height) forecasted along voyage route. "
+                    f"Estimated speed delay: ~{delay_hrs}h."
+                ),
+                "mitigation": (
+                    f"Adjust vessel engine speed or consider weather routing to bypass high wave swell zones. "
+                    f"Build buffer into ETA at destination port."
+                )
+            })
+        elif safety_score >= 80:
+            flags.append({
+                "code": "FAVORABLE_VOYAGE_WEATHER",
+                "severity": "INFO",
+                "message": (
+                    f"Favorable marine weather conditions forecasted along transit route (Safety Score: {safety_score}/100)."
+                ),
+                "mitigation": "Normal cruising speed and standard bunkering schedule maintained."
+            })
 
     return flags
 

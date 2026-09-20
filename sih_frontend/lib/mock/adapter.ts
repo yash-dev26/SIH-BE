@@ -2,8 +2,9 @@ import { ORIGIN_HUBS, PORTS, VESSEL_CLASSES } from "@/lib/mock/catalog";
 import { buildRecommendation, DEMO_ID, getDemoRecommendation } from "@/lib/mock/engine";
 import type { Recommendation, RecommendRequest } from "@/lib/types";
 
-const STORE_KEY = "freightiq.recommendations";
-const LAST_KEY = "freightiq.lastId";
+const STORE_VERSION = "v3"; // bump whenever Recommendation shape changes
+const STORE_KEY = `freightiq.recommendations.${STORE_VERSION}`;
+const LAST_KEY = `freightiq.lastId.${STORE_VERSION}`;
 
 function delay(ms = 220) {
   return new Promise((r) => setTimeout(r, ms));
@@ -55,7 +56,8 @@ export async function mockGetRecommendation(id: string): Promise<Recommendation>
     const last = typeof window !== "undefined" ? sessionStorage.getItem(LAST_KEY) : null;
     if (id === "latest" && last) {
       const stored = readStore()[last];
-      if (stored) return stored;
+      // Validate the stored object has voyageWeather (added in v3)
+      if (stored && stored.voyageWeather && stored.voyageWeather.daily_waypoints?.length) return stored;
     }
     return getDemoRecommendation();
   }

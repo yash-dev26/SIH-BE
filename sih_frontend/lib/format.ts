@@ -3,7 +3,7 @@ export function formatMt(value: number): string {
 }
 
 export function formatUsdPerMt(value: number): string {
-  return `$${value.toFixed(2)}/MT`;
+  return `$${value.toFixed(2)}/ Day`;
 }
 
 export function formatUsd(value: number): string {

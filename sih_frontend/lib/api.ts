@@ -7,6 +7,7 @@ import {
 import type { Port, Recommendation, RecommendRequest, VesselClass } from "@/lib/types";
 import {
   mapFrontendRequestToBackend,
+  PORT_CODE_REVERSE_MAP,
   transformBackendResponse,
   type BackendRecommendationResponse,
 } from "@/lib/transform";
@@ -16,6 +17,39 @@ export type { Port, Recommendation, RecommendRequest, VesselClass };
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || process.env.API_BASE_URL || "http://localhost:8000";
+
+// ── Persistence helpers (mirrors mock/adapter.ts version key) ─────────────────
+const SS_VERSION = "v3";
+const SS_STORE_KEY = `freightiq.recommendations.${SS_VERSION}`;
+const SS_LAST_KEY = `freightiq.lastId.${SS_VERSION}`;
+
+function ssRead(): Record<string, Recommendation> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(sessionStorage.getItem(SS_STORE_KEY) ?? "null") ?? {}; } catch { return {}; }
+}
+function ssWrite(rec: Recommendation, asLatest = true) {
+  if (typeof window === "undefined") return;
+  try {
+    const store = ssRead();
+    store[rec.id] = rec;
+    sessionStorage.setItem(SS_STORE_KEY, JSON.stringify(store));
+    if (asLatest) sessionStorage.setItem(SS_LAST_KEY, rec.id);
+  } catch { /* quota exceeded – ignore */ }
+}
+function ssGet(id: string): Recommendation | undefined {
+  if (typeof window === "undefined") return undefined;
+  const store = ssRead();
+  if (id === "latest") {
+    const lastId = sessionStorage.getItem(SS_LAST_KEY);
+    if (lastId) {
+      const rec = store[lastId];
+      // Only return if it has voyage weather (v3+)
+      if (rec?.voyageWeather?.daily_waypoints?.length) return rec;
+    }
+    return undefined;
+  }
+  return store[id];
+}
 
 // In-memory cache for recommendations created in current session
 const recommendationCache = new Map<string, Recommendation>();
@@ -67,6 +101,7 @@ export async function createRecommendation(request: RecommendRequest): Promise<R
   const rec = transformBackendResponse(backendResponse, request);
   recommendationCache.set(rec.id, rec);
   recommendationCache.set("latest", rec);
+  ssWrite(rec); // persist to sessionStorage so /dashboard survives refresh
   return rec;
 }
 
@@ -80,14 +115,29 @@ export async function getRecommendation(id: string): Promise<Recommendation> {
   if (id === "latest" && recommendationCache.has("latest")) {
     return recommendationCache.get("latest")!;
   }
+  // Hydrate from sessionStorage if in-memory cache was lost (e.g., page refresh)
+  const stored = ssGet(id);
+  if (stored) {
+    recommendationCache.set(id, stored);
+    return stored;
+  }
 
   try {
     const raw = await fetchJson<BackendRecommendationResponse>(`/api/recommendations/${id}`);
+
+    const originName = (raw.recommended_origin_port || raw.origin?.port_name || "").toLowerCase();
+    const origin = (["Australia", "US", "Mozambique", "Russia", "Indonesia"].find((candidate) => {
+      const lower = candidate.toLowerCase();
+      return originName.includes(lower) || originName.includes(lower.replace(" ", ""));
+    }) ?? "Australia") as RecommendRequest["origin"];
+    const destCode = (raw.destination_port_code || "").toUpperCase();
+    const destination = (PORT_CODE_REVERSE_MAP[destCode] || "Paradip") as RecommendRequest["destination"];
+
     const dummyReq: RecommendRequest = {
       commodity: (raw.commodity as RecommendRequest["commodity"]) || "Thermal Coal",
       quantityMt: raw.cargo_qty_mt || 75000,
-      origin: "Australia",
-      destination: (raw.destination_port_code as RecommendRequest["destination"]) || "Paradip",
+      origin,
+      destination,
       laycanStart: raw.recommended_entry_window_start || "2026-10-01",
       laycanEnd: raw.recommended_entry_window_end || "2026-10-10",
       contractPreference: "let_system_decide",

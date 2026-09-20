@@ -39,7 +39,8 @@ def get_chartering_recommendation(
             cargo_qty_mt=request.cargo_qty_mt,
             destination_port_code=request.destination_port_code,
             laycan_start=request.laycan_start,
-            laycan_end=request.laycan_end
+            laycan_end=request.laycan_end,
+            contract_preference=request.contract_preference,
         )
         return rec
     except ValueError as ve:

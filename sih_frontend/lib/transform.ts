@@ -1,13 +1,29 @@
 import type { Recommendation, RecommendRequest } from "./types";
+import { originById, portByName } from "@/lib/mock/catalog";
 
 const PORT_CODE_MAP: Record<string, string> = {
-  "Paradip": "INPRT",
+  "Paradip": "INPDP",
   "Vizag": "INVTZ",
-  "Gangavaram": "INGVT",
-  "Gopalpur": "INGPL",
+  "Gangavaram": "INGGV",
+  "Gopalpur": "INGOP",
   "Dhamra": "INDHM",
-  "Sagar-Sandheads": "INSAG",
+  "Sagar-Sandheads": "INSGR",
+  "Sagar / Sagar-Sandheads Anchorage": "INSGR",
+  "Sagar / Sagar-Sandheads": "INSGR",
+  "Sagar Sandheads": "INSGR",
   "Haldia": "INHAL",
+  "Haldia Dock Complex": "INHAL",
+  "Haldia Dock": "INHAL",
+};
+
+const PORT_CODE_REVERSE_MAP: Record<string, RecommendRequest["destination"]> = {
+  INPDP: "Paradip",
+  INVTZ: "Vizag",
+  INGGV: "Gangavaram",
+  INGOP: "Gopalpur",
+  INDHM: "Dhamra",
+  INSGR: "Sagar-Sandheads",
+  INHAL: "Haldia",
 };
 
 const COMMODITY_MAP: Record<string, string> = {
@@ -15,6 +31,18 @@ const COMMODITY_MAP: Record<string, string> = {
   "Coking Coal": "coking_coal",
   "Iron Ore": "iron_ore",
 };
+
+function normalizeForecastValue(rawValue: number | undefined, basePerMt: number, referenceRate: number): number {
+  if (rawValue === undefined || rawValue === null || Number.isNaN(rawValue)) {
+    return basePerMt;
+  }
+
+  if (referenceRate > 0 && rawValue > basePerMt * 20) {
+    return Number((basePerMt * (rawValue / referenceRate)).toFixed(2));
+  }
+
+  return Number(rawValue.toFixed(2));
+}
 
 export interface BackendRecommendationResponse {
   recommendation_id?: string;
@@ -41,6 +69,7 @@ export interface BackendRecommendationResponse {
   feasible_candidates_count?: number;
   why_selected?: string[];
   human_readable_summary?: string;
+  voyage_weather?: any;
   origin?: {
     latitude?: number;
     longitude?: number;
@@ -88,9 +117,13 @@ export interface BackendRecommendationResponse {
 }
 
 export function mapFrontendRequestToBackend(request: RecommendRequest) {
-  const destCode = (request.destination && PORT_CODE_MAP[request.destination])
-    ? PORT_CODE_MAP[request.destination]
-    : (request.destination || "INPRT");
+  const destinationName = typeof request.destination === "string" ? request.destination.trim() : "";
+  const normalizedDestination = destinationName.replace(/[-_/]+/g, " ").replace(/\s+/g, " ").trim();
+  const destCode = (destinationName && PORT_CODE_MAP[destinationName])
+    ? PORT_CODE_MAP[destinationName]
+    : (normalizedDestination && PORT_CODE_MAP[normalizedDestination])
+      ? PORT_CODE_MAP[normalizedDestination]
+      : (request.destination || "INPRT");
 
   const commCode = (request.commodity && COMMODITY_MAP[request.commodity])
     ? COMMODITY_MAP[request.commodity]
@@ -103,14 +136,24 @@ export function mapFrontendRequestToBackend(request: RecommendRequest) {
     laycan_start: request.laycanStart || new Date().toISOString().slice(0, 10),
     laycan_end: request.laycanEnd || new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
     risk_tolerance: request.riskTolerance || "balanced",
+    contract_preference: request.contractPreference || "let_system_decide",
   };
 }
 
-
 export function transformBackendResponse(
   backendData: BackendRecommendationResponse,
-  originalRequest: RecommendRequest
+  originalRequest: RecommendRequest,
 ): Recommendation {
+  const baseCostPerMt = backendData.cost_per_mt_usd ?? 18.5;
+  const baseTceRate = backendData.forecasted_tce_rate_usd_day ?? 20000;
+  const voyageDays = Math.max(backendData.forecast?.points?.length ? backendData.forecast.points.length : 20, 12);
+  const overallVoyageCostUsd = Number(
+    backendData.expected_total_cost_usd ?? Math.max((baseCostPerMt * (Number(originalRequest.quantityMt) || 70000)), 0),
+  );
+  const overallTceRateUsdDay = Number(
+    backendData.forecasted_tce_rate_usd_day ?? Math.max((overallVoyageCostUsd / voyageDays), 0),
+  );
+
   const summary = {
     vesselClass: backendData.recommended_vessel_class || "Capesize",
     vesselClassId: String(backendData.recommended_vessel_class_id || backendData.vessel?.vessel_class_id || "4"),
@@ -118,39 +161,51 @@ export function transformBackendResponse(
     marketEntryWindow: backendData.recommended_entry_window_start
       ? `${backendData.recommended_entry_window_start} to ${backendData.recommended_entry_window_end}`
       : `${originalRequest.laycanStart} to ${originalRequest.laycanEnd}`,
-    expectedFreightUsdPerMt: backendData.cost_per_mt_usd || 18.5,
+    expectedFreightUsdPerMt: baseCostPerMt,
     expectedLogisticsCostUsd: backendData.expected_total_cost_usd || 1387500,
+    overallTceRateUsdDay,
+    overallVoyageCostUsd,
     confidence: (backendData.model_fallback_used ? "Medium" : "High") as "High" | "Medium" | "Low",
     risk: (backendData.risk_flags && backendData.risk_flags.length > 1 ? "Moderate" : "Low") as "Low" | "Moderate" | "High",
   };
 
+  if (originalRequest.contractPreference && originalRequest.contractPreference !== "let_system_decide") {
+    const preferred = originalRequest.contractPreference.toLowerCase();
+    const override = preferred === "spot" ? "SPOT" : preferred === "short_term" ? "SHORT-TERM / MULTIPLE-VOYAGE" : preferred === "coa" ? "COA" : preferred === "period" ? "PERIOD" : summary.contractType;
+    summary.contractType = override;
+  }
+
+  const destinationPortCatalog = portByName(originalRequest.destination);
+  const originHubCatalog = originById(originalRequest.origin);
+
   const forecastPoints = [];
   if (backendData.forecast && Array.isArray(backendData.forecast.points)) {
     for (const p of backendData.forecast.points) {
-      const p50 = p.p50 || p.predicted_rate || 20000;
+      const rawP50 = Number(p.p50 ?? p.predicted_rate ?? baseTceRate ?? 20000);
+      const rawP10 = Number(p.p10 ?? p.predicted_rate_p10 ?? rawP50 * 0.9);
+      const rawP90 = Number(p.p90 ?? p.predicted_rate_p90 ?? rawP50 * 1.1);
+
       forecastPoints.push({
         date: p.date,
-        p10: p.p10 || p.predicted_rate_p10 || p50 * 0.9,
-        p50: p50,
-        p90: p.p90 || p.predicted_rate_p90 || p50 * 1.1,
+        p10: normalizeForecastValue(rawP10, baseCostPerMt, baseTceRate),
+        p50: normalizeForecastValue(rawP50, baseCostPerMt, baseTceRate),
+        p90: normalizeForecastValue(rawP90, baseCostPerMt, baseTceRate),
         isForecast: true,
       });
     }
   } else {
-    // Generate indicative 14-day trend points around forecasted_tce_rate_usd_day
-    const baseTce = backendData.forecasted_tce_rate_usd_day || 20000;
     const startDate = new Date(originalRequest.laycanStart || Date.now());
     for (let i = -7; i <= 7; i++) {
       const d = new Date(startDate);
       d.setDate(d.getDate() + i);
       const iso = d.toISOString().split("T")[0];
-      const noise = Math.sin(i) * 400;
-      const rate = baseTce + noise;
+      const drift = Number((Math.sin(i) * 0.18).toFixed(4));
+      const rate = baseCostPerMt * (1 + drift);
       forecastPoints.push({
         date: iso,
-        p10: Math.round(rate * 0.9),
-        p50: Math.round(rate),
-        p90: Math.round(rate * 1.1),
+        p10: Number((rate * 0.9).toFixed(2)),
+        p50: Number(rate.toFixed(2)),
+        p90: Number((rate * 1.1).toFixed(2)),
         isForecast: i >= 0,
       });
     }
@@ -158,31 +213,31 @@ export function transformBackendResponse(
 
   const forecast = {
     unit: "USD_PER_MT" as const,
-    currentP50: backendData.cost_per_mt_usd || 18.5,
+    currentP50: baseCostPerMt,
     asOf: new Date().toISOString().split("T")[0],
     points: forecastPoints,
   };
 
   const originHub = {
     id: originalRequest.origin,
-    name: backendData.recommended_origin_port || `${originalRequest.origin} Export Hub`,
+    name: backendData.recommended_origin_port || originHubCatalog.name,
     region: originalRequest.origin,
-    lat: backendData.origin?.latitude || -32.92,
-    lng: backendData.origin?.longitude || 151.78,
-    typicalExportBerth: backendData.origin?.port_name || "Deepwater Bulk Export Terminal",
+    lat: backendData.origin?.latitude ?? originHubCatalog.lat,
+    lng: backendData.origin?.longitude ?? originHubCatalog.lng,
+    typicalExportBerth: backendData.origin?.port_name || originHubCatalog.typicalExportBerth,
   };
 
   const destinationPort = {
     id: originalRequest.destination,
     name: originalRequest.destination,
     country: "India" as const,
-    lat: backendData.destination?.latitude || 20.26,
-    lng: backendData.destination?.longitude || 86.68,
-    maxDraftM: backendData.destination?.max_draft_m || 16.5,
-    maxLoaM: backendData.destination?.max_loa_m || 300,
-    maxBeamM: backendData.destination?.max_beam_m || 46,
-    handlingRateMtpd: backendData.destination?.handling_rate_mtpd || 70000,
-    notes: backendData.destination?.notes || "Deep draft bulk discharge berth",
+    lat: backendData.destination?.latitude ?? destinationPortCatalog.lat,
+    lng: backendData.destination?.longitude ?? destinationPortCatalog.lng,
+    maxDraftM: backendData.destination?.max_draft_m ?? destinationPortCatalog.maxDraftM,
+    maxLoaM: backendData.destination?.max_loa_m ?? destinationPortCatalog.maxLoaM,
+    maxBeamM: backendData.destination?.max_beam_m ?? destinationPortCatalog.maxBeamM,
+    handlingRateMtpd: backendData.destination?.handling_rate_mtpd ?? destinationPortCatalog.handlingRateMtpd,
+    notes: backendData.destination?.notes || destinationPortCatalog.notes,
   };
 
   const vesselOptions = [
@@ -217,7 +272,6 @@ export function transformBackendResponse(
     `Laycan window: ${summary.marketEntryWindow}`,
   ];
 
-  // Extract unique risk messages (deduplicated by code or message text)
   const seenRiskCodes = new Set<string>();
   const importantRisks: string[] = [];
   const riskMitigations: string[] = [];
@@ -231,55 +285,58 @@ export function transformBackendResponse(
     riskMitigations.push(mitigation);
   }
 
-  const rationale = {
-    headline: backendData.rationale?.summary || backendData.human_readable_summary || `Recommended importing ${originalRequest.quantityMt.toLocaleString()} MT of ${originalRequest.commodity} via ${summary.vesselClass} (${summary.contractType})`,
-    points: rationalePoints,
-    bindingConstraints: bindingConstraints,
-    forecastUsed: [
-      `Model ID: ${backendData.model_id || "Active Champion"} (v${backendData.model_version || "1.0.0"})`,
-      `Training Rows: ${backendData.model_training_rows || 8764}`,
-      `Fallback Used: ${backendData.model_fallback_used ? "Yes" : "No"}`,
-    ],
-    importantRisks: importantRisks.length > 0 ? importantRisks : ["Low operational risk environment."],
-    riskMitigations: riskMitigations,
-  };
+  function normalizeVoyageWeather(raw: any): Recommendation["voyageWeather"] | undefined {
+    if (!raw || typeof raw !== "object") return undefined;
 
-  // Deduplicate alternatives by title
-  const seenAltTitles = new Set<string>();
-  const alternatives = Array.isArray(backendData.alternatives) && backendData.alternatives.length > 0
-    ? backendData.alternatives
-        .filter((alt) => {
-          const title = alt.title || alt.contract_type || "Alternative Option";
-          if (seenAltTitles.has(title)) return false;
-          seenAltTitles.add(title);
-          return true;
-        })
-        .map((alt, idx: number) => ({
-          id: String(idx + 1),
-          title: alt.title || alt.contract_type || "Alternative Option",
-          vesselClass: alt.vessel_class || summary.vesselClass,
-          contractType: (alt.contract_type || "COA").toUpperCase(),
-          tradeoff: alt.tradeoff || alt.description || `Slightly higher cost per MT with reduced spot rate variance`,
+    const dailyWaypoints = Array.isArray(raw.daily_waypoints)
+      ? raw.daily_waypoints.map((wp: any, index: number) => ({
+          day: Number(wp?.day ?? index),
+          date: wp?.date || raw.departure_date || new Date().toISOString().slice(0, 10),
+          lat: Number(wp?.lat ?? 0),
+          lon: Number(wp?.lon ?? 0),
+          location_name: wp?.location_name || `Waypoint ${index}`,
+          wave_height_m: Number(wp?.wave_height_m ?? 0),
+          wave_direction_deg: Number(wp?.wave_direction_deg ?? 180),
+          wind_speed_kts: Number(wp?.wind_speed_kts ?? 0),
+          wind_direction: wp?.wind_direction || "SW",
+          sea_state: wp?.sea_state || "Calm (Smooth Sea)",
+          weather_condition: wp?.weather_condition || "Live Marine Weather",
+          visibility_km: Number(wp?.visibility_km ?? 10),
+          speed_penalty_pct: Number(wp?.speed_penalty_pct ?? 0),
+          fuel_penalty_pct: Number(wp?.fuel_penalty_pct ?? 0),
+          alert: wp?.alert ?? null,
+          data_source: wp?.data_source || "Open-Meteo Marine API",
         }))
-    : [
-        {
-          id: "1",
-          title: "COA Contract Alternative",
-          vesselClass: summary.vesselClass,
-          contractType: "COA",
-          tradeoff: "Provides price certainty (+ $0.85/MT premium) over spot market volatility",
-        },
-        {
-          id: "2",
-          title: "Panamax Split Cargo Voyage",
-          vesselClass: "Panamax",
-          contractType: "SPOT",
-          tradeoff: "Lowers single berth draft requirement but increases port handling duration",
-        },
-      ];
+      : [];
+
+    if (!dailyWaypoints.length) return undefined;
+
+    return {
+      origin_port_code: raw.origin_port_code || raw.origin_code || "",
+      origin_port_name: raw.origin_port_name || raw.origin_name || "Origin",
+      destination_port_code: raw.destination_port_code || raw.destination_code || "",
+      destination_port_name: raw.destination_port_name || raw.destination_name || "Destination",
+      departure_date: raw.departure_date || new Date().toISOString().slice(0, 10),
+      transit_days: Number(raw.transit_days ?? dailyWaypoints.length - 1),
+      sea_distance_nm: Number(raw.sea_distance_nm ?? 0),
+      overall_status: raw.overall_status || "Optimal Sea Conditions",
+      status_color: (raw.status_color === "RED" || raw.status_color === "YELLOW" || raw.status_color === "GREEN")
+        ? raw.status_color
+        : "GREEN",
+      safety_score: Number(raw.safety_score ?? 100),
+      max_wave_height_m: Number(raw.max_wave_height_m ?? Math.max(...dailyWaypoints.map((wp) => wp.wave_height_m), 0)),
+      max_wind_speed_kts: Number(raw.max_wind_speed_kts ?? Math.max(...dailyWaypoints.map((wp) => wp.wind_speed_kts), 0)),
+      estimated_delay_hours: Number(raw.estimated_delay_hours ?? 0),
+      estimated_fuel_surcharge_pct: Number(raw.estimated_fuel_surcharge_pct ?? 0),
+      weather_alerts: Array.isArray(raw.weather_alerts) ? raw.weather_alerts.filter(Boolean) : [],
+      daily_waypoints: dailyWaypoints,
+    };
+  }
+
+  const normalizedWeather = normalizeVoyageWeather(backendData.voyage_weather);
 
   return {
-    id: backendData.recommendation_id || `rec_${Date.now()}`,
+    id: backendData.recommendation_id || `rec-${Date.now()}`,
     demo: false,
     createdAt: new Date().toISOString(),
     request: originalRequest,
@@ -288,7 +345,26 @@ export function transformBackendResponse(
     originHub,
     destinationPort,
     vesselOptions,
-    rationale,
-    alternatives,
+    rationale: {
+      headline: backendData.human_readable_summary || `Route recommendation for ${originalRequest.origin} to ${originalRequest.destination}`,
+      points: rationalePoints,
+      bindingConstraints,
+      forecastUsed: [
+        backendData.model_id ? `Model ${backendData.model_id}` : "Champion model",
+        backendData.model_fallback_used ? "Fallback deployment path" : "Primary deployment path",
+      ],
+      importantRisks,
+      riskMitigations,
+    },
+    alternatives: (backendData.alternatives || []).map((alt, index) => ({
+      id: `${index + 1}`,
+      title: alt.title || alt.contract_type || "Alternative route",
+      vesselClass: alt.vessel_class || summary.vesselClass,
+      contractType: alt.contract_type || summary.contractType,
+      tradeoff: alt.tradeoff || alt.description || "Competitive balance of cost and risk.",
+    })),
+    voyageWeather: normalizedWeather,
   };
 }
+
+export { PORT_CODE_REVERSE_MAP };

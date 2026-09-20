@@ -23,7 +23,9 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
   const entryEnd = forecastPoints[Math.min(entryIndex + 1, forecastPoints.length - 1)];
   const entryWindow = `${formatEntryDate(entryPoint.date)}–${formatEntryDate(entryEnd.date)}`;
   const expectedFreight = entryPoint.p50;
-  const voyageFreightCost = expectedFreight * request.quantityMt;
+  const voyageFreightCost = summary.overallVoyageCostUsd || expectedFreight * request.quantityMt;
+  const overallTceRate = summary.overallTceRateUsdDay || expectedFreight * (request.quantityMt / 25);
+
   return (
     <section className="border border-midnight bg-ink text-paper shadow-[inset_4px_0_0_0_#E8A33D]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-4 md:px-6">
@@ -52,12 +54,13 @@ export function RecommendationCard({ rec }: { rec: Recommendation }) {
         <Stat label="Contract type" value={summary.contractType} />
         <Stat label="Market-entry window" value={entryWindow} gold />
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Expected freight</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Expected freight cost</p >
           <p className="mt-1 font-serif text-2xl leading-none text-paper">
-            {formatUsdPerMt(expectedFreight)}
+            {formatUsd(overallTceRate)}
+            <span className="ml-1 align-middle text-sm text-ice/70">/ day</span>
           </p>
           <p className="mt-1 text-xs text-ice/70">
-            {formatUsd(voyageFreightCost)} calculated voyage freight · {formatMt(request.quantityMt)}
+            {formatUsd(voyageFreightCost)} overall voyage cost · {formatMt(request.quantityMt)}
           </p>
         </div>
         <Stat label="Confidence" value={summary.confidence} />

@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/Button";
 import { Field, Input, Select } from "@/components/ui/Field";
 import { useCreateRecommendation } from "@/hooks/useRecommendation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   COMMODITIES,
   CONTRACT_PREFERENCES,
@@ -57,6 +58,7 @@ function Group({ title, index, children }: { title: string; index: string; child
 export function CargoForm() {
   const router = useRouter();
   const create = useCreateRecommendation();
+  const queryClient = useQueryClient();
   const dates = defaultDates();
   const form = useForm<CargoFormValues>({
     resolver: zodResolver(cargoFormSchema),
@@ -75,6 +77,10 @@ export function CargoForm() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     const rec = await create.mutateAsync(values);
+    // Pre-populate React Query cache so the dashboard page gets an instant cache hit
+    // and never needs to call GET /api/recommendations/:id (which doesn't exist)
+    queryClient.setQueryData(["recommendation", rec.id], rec);
+    queryClient.setQueryData(["recommendation", "latest"], rec);
     router.push(`/dashboard/${rec.id}`);
   });
 
