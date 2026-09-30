@@ -24,7 +24,7 @@ def init_db(db: Session) -> None:
         else:
             try:
                 paradip = db.query(Port).filter(Port.port_name == "Paradip Port").first()
-                if paradip and paradip.port_code == "INPRT":
+                if not paradip or paradip.port_code == "INPRT" or db.query(Port).count() < 5:
                     should_recreate = True
             except Exception:
                 db.rollback()
@@ -234,7 +234,7 @@ def init_db(db: Session) -> None:
         db.add_all(lanes)
         db.commit()
 
-    # 5. Seed instant baseline active champions on startup so server launches in 0.05 seconds
+    # 5. Seed instant baseline active champions on startup so server launches instantly
     from app.db.models import ModelRegistry
     active_champions_count = db.query(ModelRegistry).filter(ModelRegistry.is_active == True).count()
     if active_champions_count == 0:
@@ -258,6 +258,21 @@ def init_db(db: Session) -> None:
                 champion_records.append(rec)
         db.add_all(champion_records)
         db.commit()
+
+    # Ensure model artifact .joblib files exist on disk for all active champions
+    active_records = db.query(ModelRegistry).filter(ModelRegistry.is_active == True).all()
+    missing_artifacts = [r for r in active_records if not os.path.exists(r.artifact_path)]
+    if missing_artifacts:
+        from app.features.build_training_panel import get_training_panel
+        from app.forecasting.models.lightgbm_quantile import LightGBMQuantileForecaster
+        panel_df = get_training_panel()
+        for rec in missing_artifacts:
+            try:
+                forecaster = LightGBMQuantileForecaster(target_variable=rec.target_variable or "TCE_rate")
+                forecaster.fit(panel_df, trade_lane_id=rec.target_trade_lane_id, vessel_class_id=rec.target_vessel_class_id)
+                forecaster.save(rec.artifact_path)
+            except Exception:
+                pass
 
     # 6. Seed the default MVP auth account (Phase 5) - no-op once any user exists.
     from app.auth import ensure_default_user

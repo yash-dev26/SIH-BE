@@ -185,7 +185,10 @@ class RecommendationService:
             origin_port_code=best_option["origin_port_code"],
             destination_port_code=canonical_dest_code,
             departure_date=laycan_start,
-            transit_days=max(1, int(round(best_option.get("transit_days", 7))))
+            transit_days=max(1, int(round(best_option.get("transit_days", 7)))),
+            # The weather timeline represents the laycan chosen in the form,
+            # not just the estimated sailing duration.
+            weather_end_date=laycan_end,
         )
 
         # 5. Evaluate multi-factor risk flags

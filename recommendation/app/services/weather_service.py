@@ -1,3 +1,4 @@
+import concurrent.futures
 import math
 import logging
 from datetime import date, datetime, timedelta
@@ -8,6 +9,11 @@ from sqlalchemy.orm import Session
 from app.db.models import Port, TradeLane
 
 logger = logging.getLogger(__name__)
+
+# Open-Meteo's free forecast endpoints provide today plus the next 15 days.
+# Dates beyond this are handled by the existing deterministic fallback instead
+# of issuing requests that the API rejects with HTTP 400.
+OPEN_METEO_FORECAST_HORIZON_DAYS = 15
 
 
 def calculate_haversine_distance_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -97,11 +103,9 @@ def _generate_fallback_weather(
     if wave_height_m >= 4.0 or wind_speed_kts >= 30.0:
         speed_penalty_pct = -15.0
         fuel_penalty_pct = 12.0
-        alert = f"Heavy Seas Warning: Wave height {wave_height_m}m on Day {day_idx}. Expected 12-18h transit delay."
     elif wave_height_m >= 2.5 or wind_speed_kts >= 20.0:
         speed_penalty_pct = -6.0
         fuel_penalty_pct = 5.0
-        alert = f"Moderate Swell Caution: Wave height {wave_height_m}m. Minor speed reduction."
 
     return {
         "day": day_idx,
@@ -129,14 +133,29 @@ def fetch_live_marine_weather(
     Fetches real-time marine forecast data from Open-Meteo API for given lat/lon and target date.
     Returns parsed weather dict or None if request fails.
     """
+    latest_live_forecast_date = date.today() + timedelta(days=OPEN_METEO_FORECAST_HORIZON_DAYS)
+    if target_date > latest_live_forecast_date:
+        logger.info(
+            "Live marine forecast unavailable for %s; Open-Meteo currently ends at %s. "
+            "Using the marine simulator fallback.",
+            target_date.isoformat(),
+            latest_live_forecast_date.isoformat(),
+        )
+        return None
+
     try:
         url = "https://marine-api.open-meteo.com/v1/marine"
+        # Query the exact waypoint date rather than a fixed rolling forecast.
+        # ``forecast_days=7`` always starts from today, so it silently omits
+        # laycan dates outside that seven-day window.  Supplying the requested
+        # date range also lets the service ask for every selected laycan day.
         params = {
             "latitude": lat,
             "longitude": lon,
             "daily": "wave_height_max,wave_direction_dominant,wind_wave_height_max,swell_wave_height_max",
             "timezone": "UTC",
-            "forecast_days": 7,
+            "start_date": target_date.isoformat(),
+            "end_date": target_date.isoformat(),
         }
         with httpx.Client(timeout=3.0) as client:
             resp = client.get(url, params=params)
@@ -160,7 +179,8 @@ def fetch_live_marine_weather(
                                 "longitude": lon,
                                 "daily": "wind_speed_10m_max,weather_code",
                                 "timezone": "UTC",
-                                "forecast_days": 7,
+                                "start_date": target_date.isoformat(),
+                                "end_date": target_date.isoformat(),
                             },
                         )
                         if w_resp.status_code == 200:
@@ -217,9 +237,19 @@ class VoyageWeatherService:
         destination_port_code: str,
         departure_date: Optional[date] = None,
         transit_days: int = 7,
+        weather_end_date: Optional[date] = None,
     ) -> Dict[str, Any]:
+        """Build one weather point for every day in the requested weather window.
+
+        ``weather_end_date`` is normally the laycan end date submitted by the
+        frontend.  It takes precedence over the route's estimated transit time
+        so the timeline covers the complete selected start/end interval.
+        """
         if departure_date is None:
             departure_date = date.today()
+
+        if weather_end_date and weather_end_date < departure_date:
+            raise ValueError("weather_end_date must be on or after departure_date")
 
         origin = self.db.query(Port).filter(Port.port_code == origin_port_code).first()
         destination = self.db.query(Port).filter(Port.port_code == destination_port_code).first()
@@ -241,19 +271,14 @@ class VoyageWeatherService:
         ).first()
 
         sea_dist_nm = float(trade_lane.sea_distance_nm) if trade_lane else calculate_haversine_distance_nm(lat_start, lon_start, lat_end, lon_end)
-        if transit_days <= 0:
+        if weather_end_date:
+            transit_days = (weather_end_date - departure_date).days
+        elif transit_days <= 0:
             transit_days = max(1, int(round(sea_dist_nm / 300.0)))
 
         waypoints = interpolate_waypoints(lat_start, lon_start, lat_end, lon_end, num_days=transit_days)
 
-        daily_forecasts = []
-        max_wave_height = 0.0
-        max_wind_speed = 0.0
-        total_speed_penalty = 0.0
-        total_fuel_penalty = 0.0
-        weather_alerts = []
-
-        for wp in waypoints:
+        def _process_waypoint(wp: Dict[str, Any]) -> Dict[str, Any]:
             day_idx = wp["day"]
             target_date = departure_date + timedelta(days=day_idx)
 
@@ -276,6 +301,23 @@ class VoyageWeatherService:
             else:
                 day_weather["location_name"] = f"Waypoint Day {day_idx} ({day_weather['lat']}°, {day_weather['lon']}°)"
 
+            return day_weather
+
+        daily_forecasts = []
+        CHUNK_SIZE = 3
+        for i in range(0, len(waypoints), CHUNK_SIZE):
+            chunk = waypoints[i : i + CHUNK_SIZE]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(CHUNK_SIZE, len(chunk))) as executor:
+                futures = [executor.submit(_process_waypoint, wp) for wp in chunk]
+                daily_forecasts.extend([f.result() for f in futures])
+
+        max_wave_height = 0.0
+        max_wind_speed = 0.0
+        total_speed_penalty = 0.0
+        total_fuel_penalty = 0.0
+        weather_alerts = []
+
+        for day_weather in daily_forecasts:
             max_wave_height = max(max_wave_height, day_weather["wave_height_m"])
             max_wind_speed = max(max_wind_speed, day_weather["wind_speed_kts"])
             total_speed_penalty += day_weather.get("speed_penalty_pct", 0.0)
@@ -283,8 +325,6 @@ class VoyageWeatherService:
 
             if day_weather.get("alert"):
                 weather_alerts.append(day_weather["alert"])
-
-            daily_forecasts.append(day_weather)
 
         avg_speed_penalty = round(total_speed_penalty / max(1, len(waypoints)), 1)
         avg_fuel_penalty = round(total_fuel_penalty / max(1, len(waypoints)), 1)
@@ -323,6 +363,7 @@ class VoyageWeatherService:
             "destination_port_code": destination_port_code,
             "destination_port_name": dest_name,
             "departure_date": departure_date.isoformat(),
+            "weather_end_date": (weather_end_date or (departure_date + timedelta(days=transit_days))).isoformat(),
             "transit_days": transit_days,
             "sea_distance_nm": round(sea_dist_nm, 1),
             "overall_status": overall_status,

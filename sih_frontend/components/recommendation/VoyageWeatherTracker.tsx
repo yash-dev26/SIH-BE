@@ -6,7 +6,6 @@ import {
   Waves,
   Wind,
   ShieldCheck,
-  AlertTriangle,
   Compass,
   Clock,
   Fuel,
@@ -79,7 +78,7 @@ export function VoyageWeatherTracker({ weather }: VoyageWeatherTrackerProps) {
             )}`}
           >
             {weather.status_color === "RED" ? (
-              <AlertTriangle className="w-4 h-4 text-rose-400" />
+              <Info className="w-4 h-4 text-amber-400" />
             ) : (
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
             )}
@@ -143,10 +142,9 @@ export function VoyageWeatherTracker({ weather }: VoyageWeatherTrackerProps) {
 
       {/* Weather Alerts if any */}
       {weather.weather_alerts && weather.weather_alerts.length > 0 && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-3 flex items-start gap-2.5 text-xs text-amber-200">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-3 flex items-center gap-2.5 text-xs text-amber-200">
+          <Info className="w-4 h-4 text-amber-400 shrink-0" />
           <div>
-            <span className="font-semibold uppercase tracking-wider mr-1">Route Advisories:</span>
             {weather.weather_alerts.join(" • ")}
           </div>
         </div>
@@ -184,7 +182,7 @@ export function VoyageWeatherTracker({ weather }: VoyageWeatherTrackerProps) {
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
                       Day {wp.day}
                     </span>
-                    {hasAlert && <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />}
+                    {hasAlert && <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />}
                   </div>
                   <div className="mt-1 text-sm font-serif font-medium truncate">
                     {wp.day === 0 ? "Origin" : wp.day === weather.transit_days ? "Dest." : `${wp.wave_height_m}m`}
@@ -254,7 +252,7 @@ export function VoyageWeatherTracker({ weather }: VoyageWeatherTrackerProps) {
                 </span>
                 <span
                   className={`font-serif text-xl font-medium ${
-                    activeWaypoint.speed_penalty_pct < 0 ? "text-rose-400" : "text-emerald-400"
+                    activeWaypoint.speed_penalty_pct < 0 ? "text-amber-400" : "text-emerald-400"
                   }`}
                 >
                   {activeWaypoint.speed_penalty_pct < 0 ? `${activeWaypoint.speed_penalty_pct}%` : "Nominal"}
@@ -283,8 +281,8 @@ export function VoyageWeatherTracker({ weather }: VoyageWeatherTrackerProps) {
 
             {/* Waypoint Specific Alert */}
             {activeWaypoint.alert && (
-              <div className="flex items-center gap-2 p-3 bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <div className="flex items-center gap-2.5 p-3 bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">
+                <Info className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>{activeWaypoint.alert}</span>
               </div>
             )}
