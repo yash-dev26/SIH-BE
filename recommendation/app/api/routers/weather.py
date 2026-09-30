@@ -15,6 +15,7 @@ def get_voyage_weather_forecast(
     destination_port_code: str = Query(..., description="Destination port code e.g. INPDP, INVTZ"),
     departure_date: Optional[date] = Query(None, description="Voyage departure date (YYYY-MM-DD)"),
     transit_days: int = Query(7, description="Estimated voyage transit days (e.g. 7 days)"),
+    weather_end_date: Optional[date] = Query(None, description="Weather window end date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
 ):
     """
@@ -27,6 +28,7 @@ def get_voyage_weather_forecast(
         destination_port_code=destination_port_code,
         departure_date=departure_date,
         transit_days=transit_days,
+        weather_end_date=weather_end_date,
     )
 
 
